@@ -9,3 +9,15 @@ server/test
 .env.local
 .env.production.local
 deploy/.env
+**/.env*
+**/*.local
+**/*.local.*
+deploy/server-notes.md
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.dump
+**/*.sql.gz
+**/backups
+**/__pycache__

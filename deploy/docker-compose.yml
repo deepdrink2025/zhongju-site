@@ -43,8 +43,8 @@ services:
       api:
         condition: service_healthy
     ports:
-      # 只对外暴露这一个端口；若已有宿主 Nginx，改成 "127.0.0.1:8080:80"
-      - "${HTTP_PORT:-80}:80"
+      # 默认覆盖文件会将此端口限制在宿主回环地址
+      - "${HTTP_PORT:-8080}:80"
     networks:
       - internal
 

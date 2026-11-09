@@ -26,6 +26,7 @@ cd "$SCRIPT_DIR"
 ENV_FILE="$SCRIPT_DIR/.env"
 ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+COMPOSE_OVERRIDE="$SCRIPT_DIR/docker-compose.override.yml"
 
 # ---------- 输出 ----------
 if [ -t 1 ]; then
@@ -80,7 +81,7 @@ detect_compose() {
 }
 
 load_env() {
-  HTTP_PORT="$(get_env HTTP_PORT)";      HTTP_PORT="${HTTP_PORT:-80}"
+  HTTP_PORT="$(get_env HTTP_PORT)";      HTTP_PORT="${HTTP_PORT:-8080}"
   DB_HOST="$(get_env DB_HOST)";          DB_HOST="${DB_HOST:-mysql-common}"
   DB_PORT="$(get_env DB_PORT)";          DB_PORT="${DB_PORT:-3306}"
   DB_USER="$(get_env DB_USER)";          DB_USER="${DB_USER:-zhongju}"
@@ -191,7 +192,7 @@ SQL
 
   # ---- 5. 构建 + 启动 ----
   info "构建镜像并启动（首次构建约 1-3 分钟）"
-  "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+  "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" up -d --build
   ok "容器已启动"
 
   # ---- 6. 健康检查 ----
@@ -201,18 +202,17 @@ SQL
     ok "API 健康检查通过"
   else
     warn "API 还没起来，看日志排查："
-    printf '        %s --env-file %s -f %s logs --tail=80 api\n' "${DC[*]}" "$ENV_FILE" "$COMPOSE_FILE"
+    printf '        %s --env-file %s -f %s -f %s logs --tail=80 api\n' "${DC[*]}" "$ENV_FILE" "$COMPOSE_FILE" "$COMPOSE_OVERRIDE"
   fi
 
   # ---- 7. 汇总 ----
-  local ip
-  ip="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null || echo '服务器IP')"
   echo
   printf '%s================ 部署完成 ================%s\n' "$C_B" "$C_0"
   printf '  官网首页      %s/\n' "$base"
-  printf '  名片控制台    %s/admin   %s（对业务员保密）%s\n' "$base" "$C_WARN" "$C_0"
+  printf '  名片控制台    %s/admin\n' "$base"
   printf '  健康检查      %s/api/health\n' "$base"
-  printf '  公网访问      %s/    %s（域名解析到本机后换成域名）%s\n' "http://$ip" "$C_INFO" "$C_0"
+  printf '  公网入口      Nginx Proxy Manager → http://zhongju-site-web:80\n'
+  printf '  域名与证书    在 Nginx Proxy Manager 面板中配置\n'
   echo
   printf '  %s业务员口令     %s%s\n' "$C_B" "$STAFF_TOKEN" "$C_0"
   printf '  %s管理员口令     %s%s\n' "$C_B" "$ADMIN_TOKEN" "$C_0"
@@ -232,23 +232,23 @@ case "${1:-deploy}" in
     ;;
   ps|status)
     detect_compose; require_env
-    "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
+    "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" ps
     ;;
   logs)
     detect_compose; require_env
     if [ -n "${2:-}" ]; then
-      "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f --tail=100 "$2"
+      "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" logs -f --tail=100 "$2"
     else
-      "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f --tail=100
+      "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" logs -f --tail=100
     fi
     ;;
   restart)
     detect_compose; require_env
-    "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart
+    "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" restart
     ;;
   down)
     detect_compose; require_env
-    "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
+    "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" down
     ;;
   *)
     sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'

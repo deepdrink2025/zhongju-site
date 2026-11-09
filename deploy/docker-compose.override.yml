@@ -1,0 +1,25 @@
+# Reuse the configured MySQL/NPM network and expose the host port on loopback only.
+services:
+  api:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  web:
+    ports: !override
+      - "127.0.0.1:${HTTP_PORT:-8080}:80"
+    networks:
+      - internal
+      - shared
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

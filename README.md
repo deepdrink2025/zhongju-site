@@ -9,7 +9,7 @@
 ### 日常预览（最常用）
 
 ```bash
-cd /Users/yufei/WorkBuddy/zhongju-hall/zhongju-site
+cd zhongju-site
 npm run preview
 ```
 
@@ -20,7 +20,7 @@ npm run preview
 ### 开发模式（改代码时用，改完即时生效）
 
 ```bash
-cd /Users/yufei/WorkBuddy/zhongju-hall/zhongju-site
+cd zhongju-site
 npm run dev
 ```
 
@@ -98,9 +98,13 @@ zhongju-site/
 ├── deploy/               # 一键部署（web + api 整套）
 │   ├── deploy.sh         # 一键脚本：建 .env / 建库 / 构建 / 启动 / 健康检查
 │   ├── docker-compose.yml# web + api 两个服务，复用外部 MySQL 网络
+│   ├── docker-compose.override.yml # NPM 网络、回环端口、健康检查与日志轮转
 │   ├── Dockerfile.web    # 多阶段：node 构建 dist → nginx 运行
 │   ├── nginx.conf        # 静态站 + /api 反代 + 缓存策略
-│   └── .env.example      # 部署参数模板
+│   ├── .env.example      # 通用部署参数模板
+│   ├── bootstrap.py      # 首次建库与随机口令初始化
+│   ├── verify-deployment.py # 真实数据库与页面验证，自动清理测试名片
+│   └── server-notes.example.md # 运维记录模板，真实配置保存在忽略的本地文件中
 ├── server/               # 名片服务端（Node.js + MySQL）
 │   ├── src/app.js        # API 路由（可注入假库，便于测试）
 │   ├── src/db.js         # MySQL 连接池 + 建表（连接 mysql-common 容器）
@@ -134,11 +138,23 @@ zhongju-site/
 
 ## 六、一键部署（Docker，推荐）
 
-服务器上只需一条命令。**前置条件**：
+部署说明见 [`deploy/server-notes.example.md`](deploy/server-notes.example.md)。模板使用通用参数，部署时按目标环境配置。**前置条件**：
 
-- 已安装 Docker + Docker Compose v2
-- 有一个公共 MySQL 容器（如 `mysql-common`）跑在某个 bridge 网络上
-- 宿主 80 端口空闲（被宝塔/已有 Nginx 占用时改 `HTTP_PORT`）
+- 已安装 Docker + Docker Compose，需支持覆盖配置中的 `!override` 标签
+- 公共 MySQL 容器 `mysql-common` 已接入共享网络（示例名为 `bridge-network`）
+- Nginx Proxy Manager 已接入同一网络，所选宿主回环端口空闲（默认 `8080`）
+
+**首次部署**：
+
+```bash
+cd zhongju-site/deploy
+python3 bootstrap.py --shared-network bridge-network --http-port 8080
+./deploy.sh
+```
+
+初始化脚本利用 MySQL 容器内部的 root 配置，创建独立的 `zhongju_cards` 数据库和 `zhongju` 用户，并生成随机业务员口令、管理员口令和签名密钥。配置只写入权限为 `0600` 的 `deploy/.env`；已有配置或同名库/用户时会停止。其他参数可通过 `python3 bootstrap.py --help` 查看。
+
+**更新上线**：
 
 ```bash
 cd zhongju-site/deploy
@@ -171,10 +187,10 @@ cd zhongju-site/deploy
 
 | 变量 | 说明 |
 |---|---|
-| `HTTP_PORT` | 对外端口，默认 `80`；宿主已有 Nginx 时改 `8080` |
+| `HTTP_PORT` | 宿主回环端口，默认 `8080`；公网由 NPM 转发到容器 `80` 端口 |
 | `DB_HOST` / `DB_PORT` | 公共 MySQL 容器名与端口，默认 `mysql-common:3306` |
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | 脚本自动建库建用户时使用，默认 `zhongju` / 随机 / `zhongju_cards` |
-| `SHARED_NETWORK` | 公共 MySQL 所在网络名，`docker network ls` 查看，默认 `bridge-network` |
+| `SHARED_NETWORK` | MySQL 与 NPM 所在网络，示例默认值为 `bridge-network`，按目标环境修改 |
 | `MYSQL_ROOT_PASSWORD` | **仅首次建库用**，建完自动清空；不填就跳过建库 |
 | `STAFF_TOKEN` / `ADMIN_TOKEN` | 业务员口令 / 管理员口令，建议手改成好记的强口令 |
 | `DAILY_LIMIT` / `LOGIN_LIMIT` | 每 IP 每日建卡上限（5）、每 IP 10 分钟登录次数上限（10） |
@@ -182,19 +198,39 @@ cd zhongju-site/deploy
 ### 部署后的结构
 
 ```
-公网 :80 ─→ [web 容器: Nginx]
+公网 :80 / :443 ─→ [Nginx Proxy Manager] ─→ [web 容器: Nginx]
               ├─ /           静态站（dist，SPA 回退）
               ├─ /admin     名片控制台（no-store，noindex）
               └─ /api/*  ──→ [api 容器:8787] ──→ mysql-common (共享网络)
 ```
 
-前端与接口**同域**，不需要配 CORS；`api` 不映射宿主端口，只能由 `web` 内网访问。
+前端与接口**同域**，不需要配 CORS；`api` 不映射宿主端口。`web` 的宿主端口仅绑定回环地址（默认 `127.0.0.1:8080`），并通过共享 Docker 网络供 NPM 访问。
+
+`docker-compose.override.yml` 自动叠加网络、端口、健康检查和日志轮转配置。`deploy.sh` 的所有子命令均显式加载两个 Compose 文件；手动使用 `-f` 时也需要同时指定两个文件。
 
 ### 域名与 HTTPS
 
-- 域名 A 记录指向服务器 IP，之后直接访问域名即可（`/admin` 自然同域）
-- **推荐**：宿主已有 Nginx/宝塔时设 `HTTP_PORT=8080`，在宿主站点里反代到 `127.0.0.1:8080`，证书由 certbot/宝塔一键签发
-- 也可以把证书挂进容器：给 `web` 加 `volumes: [./certs:/etc/nginx/certs:ro]` 与 `443:443` 端口，并在 `deploy/nginx.conf` 里加 `listen 443 ssl`
+- 将你的站点域名（如 `example.com` 和 `www.example.com`）解析到目标服务器的公网地址
+- 在 NPM 中将这些域名配置到同一条 Proxy Host：Scheme 为 `http`，Forward Hostname 为 `zhongju-site-web`，Forward Port 为 `80`
+- Advanced 配置为 `client_max_body_size 4m;`，以支持名片头像请求
+- 证书、HTTPS 跳转和续期由用户在 NPM 面板中管理
+
+### 部署验证
+
+在已配置的服务器上执行：
+
+```bash
+cd zhongju-site/deploy
+python3 verify-deployment.py
+# 通过公网入口检查（证书配置完成后）：
+python3 verify-deployment.py --base-url https://example.com
+```
+
+验证脚本检查页面、静态资源、数据库、两类角色及名片完整流程，并删除临时测试名片；每次执行消耗一次当日生成配额。
+
+### 私有运维信息
+
+将 `deploy/server-notes.example.md` 复制为 `deploy/server-notes.local.md` 后填写实际服务器资料。`*.local.*`、`.env`、密钥和备份文件已列入 Git 与 Docker 构建上下文的忽略规则，公开模板只保留示例参数。
 
 > 只想跑后端、前端交给宿主 Nginx？把 `dist/` 上传到宿主站点根目录，反代 `/api/` 到 `127.0.0.1:8787`（配置可直接抄 `deploy/nginx.conf`），后端单独启动用 `cd server && docker compose up -d --build`。
 

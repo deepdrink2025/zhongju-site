@@ -4,3 +4,17 @@ npm-debug.log
 .env.local
 *.log
 test
+.env.*
+**/.env*
+*.local
+*.local.*
+**/*.local
+**/*.local.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.dump
+**/*.sql.gz
+**/backups
+**/__pycache__

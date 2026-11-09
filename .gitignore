@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.local
+*.local.*
 .DS_Store
 
 # Vite 改配置时生成的临时编译产物
@@ -13,3 +14,15 @@ vite.config.ts.timestamp-*
 !.env.example
 deploy/.env
 server/.env
+
+# 本机/服务器私有运维记录、密钥和备份
+deploy/server-notes.md
+*.pem
+*.key
+*.p12
+*.pfx
+*.dump
+*.sql.gz
+backups/
+__pycache__/
+*.py[cod]
