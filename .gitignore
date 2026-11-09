@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+
+# Vite 改配置时生成的临时编译产物
+vite.config.ts.timestamp-*
+*.timestamp-*.mjs
+
+# 密钥文件，绝对不要提交
+.env
+.env.*
+!.env.example
+deploy/.env
+server/.env

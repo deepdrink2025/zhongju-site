@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /create
+Disallow: /admin
+Disallow: /card
+Allow: /
+
+# 云名片为内部工具与个人隐私页面，禁止搜索引擎收录

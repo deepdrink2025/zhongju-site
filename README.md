@@ -1,0 +1,262 @@
+# 中聚人力 · 展示平台（PC 官网 + 手机 H5 + 云名片）
+
+临邑中聚人力资源有限公司的响应式展示网站：PC/手机自适应官网 + 业务人员专属电子名片系统（对标"君润云展厅"，非小程序）。官网为纯静态页面；名片系统可跑在本地模式（无后端），也可一键部署成 Docker（Nginx + Node.js + MySQL）实现全网可访问的短链名片。
+
+---
+
+## 一、快速启动
+
+### 日常预览（最常用）
+
+```bash
+cd /Users/yufei/WorkBuddy/zhongju-hall/zhongju-site
+npm run preview
+```
+
+然后浏览器打开 **http://127.0.0.1:4173**
+
+> `npm run preview` 使用的是 `dist/` 目录里**已构建好**的产物。如果之前改过代码，先执行下面的"开发模式"或"重新构建"。
+
+### 开发模式（改代码时用，改完即时生效）
+
+```bash
+cd /Users/yufei/WorkBuddy/zhongju-hall/zhongju-site
+npm run dev
+```
+
+按终端提示的地址打开（默认 http://localhost:5173）。
+
+### 重新构建（改完代码后正式预览）
+
+```bash
+npm run build && npm run preview
+```
+
+> 注意：在本机安全沙箱环境下，如 `npm run build` 报错，请使用 `npx vite build --emptyOutDir false`。
+
+### 首次使用（新电脑 / 删过 node_modules）
+
+```bash
+npm install
+```
+
+---
+
+## 二、网站地址（路由）
+
+| 页面 | 地址 | 说明 |
+|---|---|---|
+| 公司官网 | `/` | 单页滚动官网，PC/手机自适应 |
+| 示例名片 | `/card/wang`（另含 li / zhang / liu） | 示例数据，占位号码 |
+| 专属名片（新版） | `/card/8位短码` | 业务人员生成的短链名片，二维码更易扫 |
+| 专属名片（旧版兼容） | `/card#d=xxxx` | 早期分享的链接仍可正常打开 |
+| 名片控制台 | `/admin` | **内部工具**，需口令；业务员登录后生成名片，管理员额外可管理全部名片（停用/启用/删除/搜索） |
+| 旧入口兼容 | `/create` | 已合并进控制台，访问时自动跳转到 `/admin` |
+
+**本地模式**下 `/admin` 无需口令（仅本机数据）；**服务端模式**下口令在服务端 `.env` 中配置（`STAFF_TOKEN` 业务员 / `ADMIN_TOKEN` 管理员），登录后 12 小时内免输。
+
+---
+
+## 三、常用修改（改哪里）
+
+| 想改什么 | 改哪个文件 |
+|---|---|
+| 公司介绍、业务板块、案例、荣誉、客户等官网内容 | `src/data/company.ts` |
+| 业务人员名片（姓名/职位/电话/微信） | `src/data/members.ts`（当前为示例数据，请替换） |
+| 云名片访问口令 | `src/config.ts` 中的 `CREATE_PASSCODE` |
+| 官网配图 | `public/images/`（当前图片截取自公司简介 PDF，可直接替换同名文件） |
+| 品牌色 | `tailwind.config.ts` 中的 `brand` 色板 |
+
+改完数据文件后：开发模式（`npm run dev`）下保存即生效；正式预览需重新 `npm run build`。
+
+---
+
+## 四、业务人员如何使用云名片
+
+1. 浏览器打开 `网址/admin`，输入口令进入（业务员口令或管理员口令均可）
+2. 在「名片生成」填写姓名、职位、手机号、微信号，可上传形象照（自动压缩）
+3. 点击"生成专属名片"，获得**短链名片**（`网址/card/8位短码`）和二维码
+4. 推荐分享方式：
+   - **保存分享图（推荐）**：生成竖版名片海报，发到微信聊天里是一张"名片图"而非一串链接
+   - **微信内转发**：在微信打开名片页 → 右上角「···」转发，卡片标题自动显示"姓名 · 职位"
+   - **复制链接**：备用方式
+5. 名片保存在"我的名片"列表，可随时打开/复制/删除（服务端模式下存服务器，短链任意设备可打开；本地模式存本机）
+
+> 防滥用机制：名片字段有长度/格式校验；每日生成有上限（前端 5 张/设备、服务端 5 张/IP 双重限制）；/create 与 /card 已禁止搜索引擎收录。
+> 名片有本地与服务端两种模式，详见下文「七、服务端名片系统」。
+
+---
+
+## 五、技术栈与目录结构
+
+- **技术栈**：Vite 5 + React 18 + TypeScript + Tailwind CSS 3 + react-router-dom 6 + qrcode.react；服务端 Node.js 20 + Express + MySQL（Docker）
+- **部署**：`cd deploy && ./deploy.sh` 一键起 web（Nginx 静态站 + 同域 `/api` 反代）+ api（名片服务），详见「六、一键部署」
+
+```
+zhongju-site/
+├── public/images/        # 官网配图（源自公司简介 PDF）
+├── deploy/               # 一键部署（web + api 整套）
+│   ├── deploy.sh         # 一键脚本：建 .env / 建库 / 构建 / 启动 / 健康检查
+│   ├── docker-compose.yml# web + api 两个服务，复用外部 MySQL 网络
+│   ├── Dockerfile.web    # 多阶段：node 构建 dist → nginx 运行
+│   ├── nginx.conf        # 静态站 + /api 反代 + 缓存策略
+│   └── .env.example      # 部署参数模板
+├── server/               # 名片服务端（Node.js + MySQL）
+│   ├── src/app.js        # API 路由（可注入假库，便于测试）
+│   ├── src/db.js         # MySQL 连接池 + 建表（连接 mysql-common 容器）
+│   ├── src/index.js      # 启动入口
+│   ├── sql/init.sql      # 手动建库脚本（一键脚本已自动完成，排错用）
+│   ├── Dockerfile / docker-compose.yml   # 只单独跑后端时使用
+│   └── test/             # 冒烟测试（内存假库）+ 本地联调服务器
+├── src/
+│   ├── config.ts         # 服务端模式开关、API 地址
+│   ├── data/
+│   │   ├── company.ts    # 官网全部内容数据（改内容主要改这里）
+│   │   └── members.ts    # 示例业务人员名片
+│   ├── pages/
+│   │   ├── Home.tsx      # 官网首页
+│   │   ├── CardPage.tsx  # 名片展示页（客户看的）
+│   │   └── CardConsole.tsx# 名片控制台 /admin（业务员 + 管理员共用入口）
+│   ├── components/       # 官网区块组件 + TabBar + 名片面板
+│   │   ├── CardCreatePanel.tsx  # 名片生成表单 + 我的名片
+│   │   └── AdminCardList.tsx    # 管理员列表（搜索/停用/删除）
+│   ├── utils/
+│   │   ├── cardCodec.ts  # 名片数据 ↔ 链接 编解码（旧版兼容）
+│   │   ├── cardService.ts# 本地名片存储
+│   │   ├── cardAuth.ts   # 口令登录 + token 存储
+│   │   ├── cardStore.ts  # 名片门面层：自动切换本地/服务端模式
+│   │   └── poster.ts     # 分享海报（Canvas 绘制，矢量图标）
+│   └── vite-env.d.ts     # 环境变量类型
+└── dist/                 # 构建产物（npm run preview 用的就是它）
+```
+
+---
+
+## 六、一键部署（Docker，推荐）
+
+服务器上只需一条命令。**前置条件**：
+
+- 已安装 Docker + Docker Compose v2
+- 有一个公共 MySQL 容器（如 `mysql-common`）跑在某个 bridge 网络上
+- 宿主 80 端口空闲（被宝塔/已有 Nginx 占用时改 `HTTP_PORT`）
+
+```bash
+cd zhongju-site/deploy
+./deploy.sh
+```
+
+脚本会自动完成 7 件事，全程无需手工编辑文件：
+
+1. 检查 docker / compose，缺了直接报错并给安装链接
+2. 没有 `.env` 就从 `.env.example` 复制；`DB_PASSWORD`、`STAFF_TOKEN`、`ADMIN_TOKEN`、`TOKEN_SECRET` 里"请改成…"的占位符**自动换成随机强密码**
+3. 校验公共 bridge 网络是否存在（不存在则创建）、`mysql-common` 是否在该网络中
+4. 读到 `MYSQL_ROOT_PASSWORD` 就自动在 `mysql-common` 里建库、建用户、授权（幂等，可重复执行），成功后清空该字段
+5. `docker compose up -d --build` 构建并启动 `web`（Nginx + 静态站）+ `api`（名片服务）
+6. 轮询 `/api/health` 等 API 起来，失败则提示看日志的命令
+7. 打印访问地址、业务员口令、管理员口令
+
+**更新上线**：改完代码再跑一次 `./deploy.sh` 即可（重新构建镜像，数据库数据保留）。
+
+### 常用命令
+
+| 命令 | 作用 |
+|---|---|
+| `./deploy.sh` | 首次部署 / 更新上线 |
+| `./deploy.sh ps` | 查看容器状态与健康 |
+| `./deploy.sh logs api` | 跟踪 API 日志（`logs` 不带参数看全部） |
+| `./deploy.sh restart` | 重启容器 |
+| `./deploy.sh down` | 停止并移除容器（名片数据在 MySQL 里，不会丢） |
+
+### `deploy/.env` 关键项
+
+| 变量 | 说明 |
+|---|---|
+| `HTTP_PORT` | 对外端口，默认 `80`；宿主已有 Nginx 时改 `8080` |
+| `DB_HOST` / `DB_PORT` | 公共 MySQL 容器名与端口，默认 `mysql-common:3306` |
+| `DB_USER` / `DB_PASSWORD` / `DB_NAME` | 脚本自动建库建用户时使用，默认 `zhongju` / 随机 / `zhongju_cards` |
+| `SHARED_NETWORK` | 公共 MySQL 所在网络名，`docker network ls` 查看，默认 `bridge-network` |
+| `MYSQL_ROOT_PASSWORD` | **仅首次建库用**，建完自动清空；不填就跳过建库 |
+| `STAFF_TOKEN` / `ADMIN_TOKEN` | 业务员口令 / 管理员口令，建议手改成好记的强口令 |
+| `DAILY_LIMIT` / `LOGIN_LIMIT` | 每 IP 每日建卡上限（5）、每 IP 10 分钟登录次数上限（10） |
+
+### 部署后的结构
+
+```
+公网 :80 ─→ [web 容器: Nginx]
+              ├─ /           静态站（dist，SPA 回退）
+              ├─ /admin     名片控制台（no-store，noindex）
+              └─ /api/*  ──→ [api 容器:8787] ──→ mysql-common (共享网络)
+```
+
+前端与接口**同域**，不需要配 CORS；`api` 不映射宿主端口，只能由 `web` 内网访问。
+
+### 域名与 HTTPS
+
+- 域名 A 记录指向服务器 IP，之后直接访问域名即可（`/admin` 自然同域）
+- **推荐**：宿主已有 Nginx/宝塔时设 `HTTP_PORT=8080`，在宿主站点里反代到 `127.0.0.1:8080`，证书由 certbot/宝塔一键签发
+- 也可以把证书挂进容器：给 `web` 加 `volumes: [./certs:/etc/nginx/certs:ro]` 与 `443:443` 端口，并在 `deploy/nginx.conf` 里加 `listen 443 ssl`
+
+> 只想跑后端、前端交给宿主 Nginx？把 `dist/` 上传到宿主站点根目录，反代 `/api/` 到 `127.0.0.1:8787`（配置可直接抄 `deploy/nginx.conf`），后端单独启动用 `cd server && docker compose up -d --build`。
+
+## 七、服务端名片系统（推荐正式部署时启用）
+
+启用后：名片存在 MySQL，短链/二维码在**任何设备**都能打开；换手机找管理员重新发链接；离职可一键停用。
+
+**双口令分层**：业务员口令（`STAFF_TOKEN`，在 `/admin` 登录，只能创建名片）与管理员口令（`ADMIN_TOKEN`，在 `/admin` 登录，可看全量列表、停用、删除）分开。口令在页面输入后由服务端校验并返回 **12 小时短期 token**，口令本身不进前端构建产物。
+
+**名片控制台 `/admin`**：不在官网任何导航中展示（noindex），网址/书签直接进入。业务员与管理员共用一个入口，登录后按口令权限显示 Tab：业务员只见「名片生成」；管理员额外有「名片管理」——搜索（姓名/手机/短码/部门）、状态筛选、停用/启用（立即生效）、删除、复制短链、打开名片。支持 `/admin?tab=list` 直达管理页。
+
+### 手动部署（一键脚本已覆盖，排错或"只跑后端"时参考）
+
+**1）数据库准备**（在 mysql-common 容器执行一次，记得先把 init.sql 里的密码改成与 `.env` 一致）
+
+```bash
+docker exec -i mysql-common mysql -uroot -p'你的root密码' < server/sql/init.sql
+```
+
+**2）启动服务端容器**
+
+```bash
+cd server
+cp .env.example .env      # 修改：DB_PASSWORD、STAFF_TOKEN、ADMIN_TOKEN、SHARED_NETWORK（docker network ls 查看）
+docker compose up -d --build
+```
+
+容器会自动建表，并只绑定 `127.0.0.1:8787`（由 Nginx 反代，不直接暴露公网）。
+
+**3）Nginx 反代**（与官网同域名；完整版见 `deploy/nginx.conf`）
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header X-Real-IP $remote_addr;
+    client_max_body_size 4m;
+}
+```
+
+**4）前端启用服务端模式构建**
+
+```bash
+cp .env.example .env.production.local   # VITE_CARD_SERVER=on
+npm run build
+```
+
+**5）本地验证（无需 MySQL）**
+
+```bash
+cd server && node test/smoke.mjs        # 27 项冒烟测试（含角色鉴权）
+node test/dev-server.mjs 8787           # 内存假库 API，配合前端联调
+```
+
+### 接口一览
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | /api/admin/login | 公开 | 口令换 12h token（限流 10 次/IP/10 分钟） |
+| GET | /api/admin/me | 登录 | 查询当前身份与过期时间 |
+| POST | /api/cards | staff/admin | 创建名片（限流 5 次/IP/天） |
+| GET | /api/cards/:code | 公开 | 短码读取（停用只返回状态） |
+| PATCH | /api/cards/:code/status | admin | 停用/启用 |
+| DELETE | /api/cards/:code | admin | 删除 |
+| GET | /api/cards | admin | 全量列表（管理用） |
+| GET | /api/health | 公开 | 健康检查 |

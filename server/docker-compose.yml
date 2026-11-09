@@ -1,0 +1,28 @@
+services:
+  card-server:
+    build: .
+    container_name: zhongju-card-server
+    restart: unless-stopped
+    environment:
+      # 桥接网络内直接按容器名访问公共 MySQL
+      DB_HOST: ${DB_HOST:-mysql-common}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-zhongju_cards}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      DAILY_LIMIT: ${DAILY_LIMIT:-5}
+      PORT: "8787"
+      # 与前端同域部署时无需 CORS；本地联调可设为前端地址
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    ports:
+      # 只绑定 127.0.0.1，由宿主机 Nginx 反代 /api，避免直接暴露公网
+      - "127.0.0.1:8787:8787"
+    networks:
+      - shared
+
+networks:
+  shared:
+    external: true
+    # 改成你服务器上现有桥接网络的名字（docker network ls 查看）
+    name: ${SHARED_NETWORK:-bridge-network}

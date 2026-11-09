@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-white text-neutral-800 antialiased;
+  font-family:
+    'Inter', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB',
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+::selection {
+  @apply bg-brand-500 text-white;
+}
+
+/* 数字使用等宽数字（tabular-nums），统计与大数字更整齐 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 锚点定位时为固定导航栏预留高度 */
+section[id] {
+  scroll-margin-top: 72px;
+}
+
+/* Hero 点阵背景（浅色版） */
+.dot-grid {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(23, 23, 23, 0.07) 1px,
+    transparent 0
+  );
+  background-size: 26px 26px;
+}
+
+/* 跑马灯动画（Butter 风客户墙） */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.animate-marquee {
+  animation: marquee 36s linear infinite;
+}
+.animate-marquee-reverse {
+  animation-direction: reverse;
+}
+.marquee-pause:hover .animate-marquee {
+  animation-play-state: paused;
+}
+
+/* 柔和光晕（浅色底上做淡彩渲染） */
+.glow-blob {
+  @apply pointer-events-none absolute rounded-full blur-[100px];
+}
