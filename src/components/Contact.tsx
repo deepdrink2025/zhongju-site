@@ -51,7 +51,7 @@ export default function Contact() {
                 </a>
                 <a
                   href={`https://ditu.amap.com/search?query=${encodeURIComponent(
-                    '山东中聚人力资源服务有限公司'
+                    company.address
                   )}&city=${encodeURIComponent('德州')}`}
                   target="_blank"
                   rel="noreferrer"

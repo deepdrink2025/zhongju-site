@@ -11,7 +11,12 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME:-zhongju_cards}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      STAFF_TOKEN: ${STAFF_TOKEN}
+      TOKEN_SECRET: ${TOKEN_SECRET}
       DAILY_LIMIT: ${DAILY_LIMIT:-5}
+      LOGIN_LIMIT: ${LOGIN_LIMIT:-10}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      QUOTA_TIME_ZONE: ${QUOTA_TIME_ZONE:-Asia/Shanghai}
       PORT: "8787"
       # 与前端同域部署时无需 CORS；本地联调可设为前端地址
       CORS_ORIGIN: ${CORS_ORIGIN:-*}

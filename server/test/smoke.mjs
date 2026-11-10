@@ -33,7 +33,7 @@ const okCard = {
   phone: '13805341234',
   wechat: 'zhangmy2026',
   bio: '专注制造业用工方案，累计服务企业 60+ 家。',
-  avatar: 'data:image/png;base64,AAAA',
+  avatar: '',
 };
 
 async function login(passcode) {
@@ -123,7 +123,7 @@ let shortCode = '';
     headers: { 'Content-Type': 'application/json', 'X-Card-Token': STAFF },
     body: JSON.stringify({ ...okCard, name: '王经理', phone: '13805348888' }),
   });
-  check('兼容旧版口令头创建', legacy.status === 200);
+  check('旧版口令头已关闭', legacy.status === 401);
 }
 
 console.log('读取名片');
@@ -145,7 +145,10 @@ console.log('管理接口（仅管理员）');
   const a = await fetch(`${base}/api/cards?limit=10`, { headers: auth(adminToken) });
   const j = await a.json();
   check('管理员可看全量列表', a.status === 200 && Array.isArray(j.items));
-  check('列表不含头像大字段', j.items.every((it) => !it.avatar));
+  check(
+    '列表不含头像大字段',
+    j.items.every((it) => !it.avatar)
+  );
 
   const ss = await fetch(`${base}/api/cards/${shortCode}/status`, {
     method: 'PATCH',
@@ -171,11 +174,12 @@ console.log('管理接口（仅管理员）');
     body: JSON.stringify({ status: 'active' }),
   });
 
+  const otherStaff = await login(STAFF);
   const delStaff = await fetch(`${base}/api/cards/${shortCode}`, {
     method: 'DELETE',
-    headers: auth(staffToken),
+    headers: auth(otherStaff.body.token),
   });
-  check('业务员不能删除 403', delStaff.status === 403);
+  check('业务员不能删除他人名片 403', delStaff.status === 403);
 
   const del = await fetch(`${base}/api/cards/${shortCode}`, {
     method: 'DELETE',
@@ -189,8 +193,8 @@ console.log('管理接口（仅管理员）');
 
 console.log('创建限流');
 {
-  // 已成功创建 3 次（staff 1 + admin 1 + legacy 1），再 2 次后达 5 次上限
-  for (let i = 0; i < 2; i++) {
+  // 创建配额按恢复身份统计，当前 staff 已创建 1 张。
+  for (let i = 0; i < 4; i++) {
     await fetch(`${base}/api/cards`, {
       method: 'POST',
       headers: auth(staffToken),

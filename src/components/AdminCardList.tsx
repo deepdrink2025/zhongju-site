@@ -2,7 +2,7 @@
  * 名片管理列表（管理员/本地模式预览用）
  * 不含门禁与顶栏，由控制台按角色挂载
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import { copyText } from '../utils/clipboard';
 import {
@@ -10,6 +10,7 @@ import {
   listAllCardsAsync,
   removeCardAsync,
   setCardStatusAsync,
+  assignCardOwnerAsync,
   type CardRecord,
 } from '../utils/cardStore';
 
@@ -30,6 +31,22 @@ export default function AdminCardList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [busyCode, setBusyCode] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+  const [ownerCard, setOwnerCard] = useState<CardRecord | null>(null);
+  const [ownerCode, setOwnerCode] = useState('');
+  const [query, setQuery] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({ total: 0, active: 0, disabled: 0 });
+  const requestVersion = useRef(0);
+  const pageSize = 50;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setQuery(keyword.trim());
+      setOffset(0);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [keyword]);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -37,37 +54,32 @@ export default function AdminCardList() {
   };
 
   const load = useCallback(async () => {
+    const version = ++requestVersion.current;
     setLoading(true);
     setError('');
-    const res = await listAllCardsAsync();
-    if (res.ok) setItems(res.items);
-    else setError(res.error);
+    const res = await listAllCardsAsync({
+      keyword: query,
+      status: statusFilter,
+      offset,
+      limit: pageSize,
+    });
+    if (version !== requestVersion.current) return;
+    if (res.ok) {
+      setItems(res.items);
+      setTotal(res.total);
+      setCounts(res.counts);
+      if (offset > 0 && offset >= res.total)
+        setOffset(Math.max(0, Math.ceil(res.total / pageSize) - 1) * pageSize);
+    } else setError(res.error);
     setLoading(false);
-  }, []);
+  }, [query, statusFilter, offset]);
 
   useEffect(() => {
     load();
+    return () => {
+      requestVersion.current++;
+    };
   }, [load]);
-
-  const filtered = useMemo(() => {
-    const kw = keyword.trim().toLowerCase();
-    return items.filter((c) => {
-      if (statusFilter !== 'all' && c.status !== statusFilter) return false;
-      if (!kw) return true;
-      return (
-        c.name.toLowerCase().includes(kw) ||
-        c.phone.includes(kw) ||
-        c.shortCode.toLowerCase().includes(kw) ||
-        c.title.toLowerCase().includes(kw) ||
-        c.department.toLowerCase().includes(kw)
-      );
-    });
-  }, [items, keyword, statusFilter]);
-
-  const counts = useMemo(() => {
-    const active = items.filter((c) => c.status === 'active').length;
-    return { total: items.length, active, disabled: items.length - active };
-  }, [items]);
 
   const handleCopy = async (text: string, msg: string) => {
     const ok = await copyText(text);
@@ -80,9 +92,7 @@ export default function AdminCardList() {
     const ok = await setCardStatusAsync(card.shortCode, next);
     setBusyCode(null);
     if (ok) {
-      setItems((list) =>
-        list.map((c) => (c.shortCode === card.shortCode ? { ...c, status: next } : c))
-      );
+      await load();
       showToast(next === 'disabled' ? '已停用，客户打开会看到停用提示' : '已恢复启用');
     } else {
       showToast('操作失败，请重试');
@@ -95,7 +105,7 @@ export default function AdminCardList() {
     const ok = await removeCardAsync(card.shortCode);
     setBusyCode(null);
     if (ok) {
-      setItems((list) => list.filter((c) => c.shortCode !== card.shortCode));
+      await load();
       showToast('名片已删除');
     } else {
       showToast('删除失败，请重试');
@@ -107,9 +117,7 @@ export default function AdminCardList() {
       <div className="mx-auto w-full max-w-5xl px-4 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-neutral-900">
-              全部名片
-            </h1>
+            <h1 className="text-2xl font-extrabold tracking-tight text-neutral-900">全部名片</h1>
             <p className="mt-1 text-sm text-neutral-500">
               共 {counts.total} 张 · 正常 {counts.active} · 停用 {counts.disabled}
             </p>
@@ -144,7 +152,10 @@ export default function AdminCardList() {
               <button
                 key={key}
                 type="button"
-                onClick={() => setStatusFilter(key)}
+                onClick={() => {
+                  setStatusFilter(key);
+                  setOffset(0);
+                }}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
                   statusFilter === key
                     ? 'bg-neutral-900 text-white'
@@ -169,15 +180,17 @@ export default function AdminCardList() {
             </div>
           )}
 
-          {!loading && filtered.length === 0 && !error && (
+          {!loading && items.length === 0 && !error && (
             <div className="rounded-2xl bg-white p-12 text-center shadow-card">
               <p className="text-neutral-400">
-                {items.length === 0 ? '还没有名片，先去「名片生成」创建第一张' : '没有匹配的名片'}
+                {counts.total === 0 && !query
+                  ? '还没有名片，先去「名片生成」创建第一张'
+                  : '没有匹配的名片'}
               </p>
             </div>
           )}
 
-          {filtered.map((card) => (
+          {items.map((card) => (
             <div
               key={card.shortCode}
               className={`flex flex-col gap-4 rounded-2xl bg-white p-5 shadow-card sm:flex-row sm:items-center ${
@@ -215,6 +228,22 @@ export default function AdminCardList() {
 
               <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
                 <a
+                  href={`/admin?edit=${encodeURIComponent(card.shortCode)}`}
+                  className="rounded-full border border-neutral-200 px-3 py-1.5 text-neutral-700"
+                >
+                  编辑
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOwnerCard(card);
+                    setOwnerCode('');
+                  }}
+                  className="rounded-full border border-neutral-200 px-3 py-1.5 text-neutral-700"
+                >
+                  分配归属
+                </button>
+                <a
                   href={cardUrlOfCode(card.shortCode)}
                   target="_blank"
                   rel="noreferrer"
@@ -249,8 +278,74 @@ export default function AdminCardList() {
             </div>
           ))}
         </div>
+        <div className="mt-6 flex items-center justify-between gap-3 text-sm text-neutral-500">
+          <span>
+            共 {total} 条匹配 · 第 {Math.floor(offset / pageSize) + 1}/
+            {Math.max(1, Math.ceil(total / pageSize))} 页
+          </span>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              disabled={loading || offset === 0}
+              className="disabled:opacity-30"
+              onClick={() => setOffset(Math.max(0, offset - pageSize))}
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              disabled={loading || offset + pageSize >= total}
+              className="disabled:opacity-30"
+              onClick={() => setOffset(offset + pageSize)}
+            >
+              下一页
+            </button>
+          </div>
+        </div>
       </div>
 
+      {ownerCard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6">
+            <h2 className="font-bold">分配「{ownerCard.name}」的管理归属</h2>
+            <p className="mt-3 text-sm text-neutral-500">
+              填写本人提供的恢复码。保存后，该恢复码的持有人可修改和删除这张名片。
+            </p>
+            <input
+              type="password"
+              autoComplete="off"
+              maxLength={32}
+              value={ownerCode}
+              onChange={(e) => setOwnerCode(e.target.value.trim().toLowerCase())}
+              placeholder="32 位恢复码"
+              className="mt-4 w-full rounded-lg border p-3"
+            />
+            <div className="mt-4 flex justify-end gap-4">
+              <button type="button" onClick={() => setOwnerCard(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={!/^[a-f0-9]{32}$/.test(ownerCode) || !!busyCode}
+                onClick={async () => {
+                  setBusyCode(ownerCard.shortCode);
+                  const ok = await assignCardOwnerAsync(ownerCard.shortCode, ownerCode);
+                  setBusyCode(null);
+                  if (ok) {
+                    setOwnerCard(null);
+                    setOwnerCode('');
+                    showToast('归属已更新');
+                    await load();
+                  } else showToast('分配失败，请重试');
+                }}
+                className="text-brand-600 disabled:opacity-30"
+              >
+                保存归属
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {toast && (
         <div className="fixed left-1/2 top-20 z-[60] -translate-x-1/2 rounded-full bg-neutral-900 px-5 py-2.5 text-sm text-white shadow-lg">
           <span className="flex items-center gap-2">

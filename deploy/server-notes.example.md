@@ -22,6 +22,8 @@ python3 bootstrap.py --shared-network bridge-network --http-port 8080
 
 初始化脚本使用 MySQL 容器中的 root 环境配置建立独立数据库和用户，并将随机口令写入权限为 `0600` 的 `.env`。已有配置、数据库或同名用户时会停止；可用 `python3 bootstrap.py --help` 查看其他参数。
 
+初始化中断后保留 `.env`，使用 `python3 bootstrap.py --resume` 继续；脚本验证已有用户密码后再授权，不会自动替换已有用户的密码。
+
 ## 运行结构
 
 Nginx Proxy Manager → `zhongju-site-web:80` → `zhongju-card-api:8787` → MySQL。`web` 接入项目内部网络和配置的共享网络，API 不发布宿主端口。两个容器均配置健康检查、自动重启和日志轮转。
@@ -30,7 +32,9 @@ Nginx Proxy Manager → `zhongju-site-web:80` → `zhongju-card-api:8787` → My
 
 ## 口令与维护
 
-业务员口令、管理员口令、数据库密码和 token 签名密钥存放在服务器的 `deploy/.env` 中。口令变更后运行 `docker compose up -d`；修改 `TOKEN_SECRET` 会使先前签发的登录 token 失效。
+业务员口令、管理员口令、数据库密码和 token 签名密钥存放在服务器的 `deploy/.env` 中。业务员与管理员口令必须不同且至少 16 位，签名密钥至少 32 位。口令变更后运行 `docker compose up -d`；变更某角色口令会撤销该角色旧 token，修改 `TOKEN_SECRET` 会使全部旧 token 失效。
+
+升级前备份数据库；首次启动会新增归属字段、会话表和配额表。历史名片保持原短码，由管理员按本人提供的恢复码分配归属。详见 `docs/security-fixes.md`。
 
 ```bash
 cd deploy

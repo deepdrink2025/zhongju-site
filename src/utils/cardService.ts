@@ -17,6 +17,7 @@ export interface CardRecord extends CardData {
   status: 'active' | 'disabled';
   createdAt: number;
   updatedAt: number;
+  permissions?: { edit: boolean; delete: boolean };
 }
 
 const STORE_KEY = 'zhongju_card_store';
@@ -167,7 +168,7 @@ export function createCard(data: CardData): CreateResult | CreateError {
   store.records[shortCode] = record;
   store.order.unshift(shortCode);
   writeStore(store);
-  writeMine([shortCode, ...readMine().slice(0, 19)]);
+  writeMine([shortCode, ...readMine().filter((code) => code !== shortCode)]);
   logGen();
   return { ok: true, record };
 }
@@ -176,6 +177,17 @@ export function createCard(data: CardData): CreateResult | CreateError {
 export function getCardByCode(code: string): CardRecord | null {
   const store = readStore();
   return store.records[code] ?? null;
+}
+
+export function updateCard(code: string, data: CardData): CreateResult | CreateError {
+  const invalid = validateCardData(data);
+  if (invalid) return { ok: false, error: invalid };
+  const store = readStore();
+  if (!store.records[code]) return { ok: false, error: '未找到该名片' };
+  const record = { ...store.records[code], ...data, updatedAt: Date.now() };
+  store.records[code] = record;
+  writeStore(store);
+  return { ok: true, record };
 }
 
 /** 更新名片状态（本地实现；服务端阶段替换为 PATCH /api/cards/:code） */
@@ -214,7 +226,7 @@ export function cardUrlOfCode(code: string): string {
 
 /** 记录一张本机生成过的名片短码 */
 export function rememberCode(code: string): void {
-  writeMine([code, ...readMine().filter((c) => c !== code).slice(0, 19)]);
+  writeMine([code, ...readMine().filter((c) => c !== code)]);
 }
 
 /** 从本机索引移除短码 */
@@ -238,9 +250,7 @@ export function recordGeneration(): void {
  * 将旧版（zhongju_my_cards 中的无短码名片）迁移到新存储，
  * 使其获得短码链接；已迁移过的跳过。
  */
-export function migrateLegacyCards(
-  legacy: Array<CardData & { createdAt: number }>
-): number {
+export function migrateLegacyCards(legacy: Array<CardData & { createdAt: number }>): number {
   const store = readStore();
   const mine = readMine();
   let migrated = 0;

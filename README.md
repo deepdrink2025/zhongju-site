@@ -49,7 +49,7 @@ npm install
 | 公司官网 | `/` | 单页滚动官网，PC/手机自适应 |
 | 示例名片 | `/card/wang`（另含 li / zhang / liu） | 示例数据，占位号码 |
 | 专属名片（新版） | `/card/8位短码` | 业务人员生成的短链名片，二维码更易扫 |
-| 专属名片（旧版兼容） | `/card#d=xxxx` | 早期分享的链接仍可正常打开 |
+| 专属名片（旧版兼容） | `/card#d=xxxx` | 服务端模式拒绝无签名旧链接；请由管理员迁移为正式短链 |
 | 名片控制台 | `/admin` | **内部工具**，需口令；业务员登录后生成名片，管理员额外可管理全部名片（停用/启用/删除/搜索） |
 | 旧入口兼容 | `/create` | 已合并进控制台，访问时自动跳转到 `/admin` |
 
@@ -63,7 +63,7 @@ npm install
 |---|---|
 | 公司介绍、业务板块、案例、荣誉、客户等官网内容 | `src/data/company.ts` |
 | 业务人员名片（姓名/职位/电话/微信） | `src/data/members.ts`（当前为示例数据，请替换） |
-| 云名片访问口令 | `src/config.ts` 中的 `CREATE_PASSCODE` |
+| 云名片访问口令 | 服务器 `deploy/.env` 中的 `STAFF_TOKEN` / `ADMIN_TOKEN` |
 | 官网配图 | `public/images/`（当前图片截取自公司简介 PDF，可直接替换同名文件） |
 | 品牌色 | `tailwind.config.ts` 中的 `brand` 色板 |
 
@@ -80,16 +80,17 @@ npm install
    - **保存分享图（推荐）**：生成竖版名片海报，发到微信聊天里是一张"名片图"而非一串链接
    - **微信内转发**：在微信打开名片页 → 右上角「···」转发，卡片标题自动显示"姓名 · 职位"
    - **复制链接**：备用方式
-5. 名片保存在"我的名片"列表，可随时打开/复制/删除（服务端模式下存服务器，短链任意设备可打开；本地模式存本机）
+5. 名片保存在"我的名片"列表，可打开、编辑或删除。服务端模式支持复制短链，短链可在其他设备打开；本地模式仅供本机预览
+6. 服务端控制台可复制私密恢复码；在新设备或其他域名登录时，同时填写访问口令和恢复码即可找回本人名片。历史名片由管理员确认后分配归属
 
-> 防滥用机制：名片字段有长度/格式校验；每日生成有上限（前端 5 张/设备、服务端 5 张/IP 双重限制）；/create 与 /card 已禁止搜索引擎收录。
+> 防滥用机制：名片字段有长度/格式校验；每日生成配额按恢复身份持久化统计（默认 5 张），IP 另作短时防滥用；/create 与 /card 已禁止搜索引擎收录。
 > 名片有本地与服务端两种模式，详见下文「七、服务端名片系统」。
 
 ---
 
 ## 五、技术栈与目录结构
 
-- **技术栈**：Vite 5 + React 18 + TypeScript + Tailwind CSS 3 + react-router-dom 6 + qrcode.react；服务端 Node.js 20 + Express + MySQL（Docker）
+- **技术栈**：Vite 8 + React 18 + TypeScript + Tailwind CSS 3 + react-router-dom 7 + qrcode.react；服务端 Node.js 24 + Express + MySQL（Docker）
 - **部署**：`cd deploy && ./deploy.sh` 一键起 web（Nginx 静态站 + 同域 `/api` 反代）+ api（名片服务），详见「六、一键部署」
 
 ```
@@ -168,8 +169,8 @@ cd zhongju-site/deploy
 3. 校验公共 bridge 网络是否存在（不存在则创建）、`mysql-common` 是否在该网络中
 4. 读到 `MYSQL_ROOT_PASSWORD` 就自动在 `mysql-common` 里建库、建用户、授权（幂等，可重复执行），成功后清空该字段
 5. `docker compose up -d --build` 构建并启动 `web`（Nginx + 静态站）+ `api`（名片服务）
-6. 轮询 `/api/health` 等 API 起来，失败则提示看日志的命令
-7. 打印访问地址、业务员口令、管理员口令
+6. 轮询 `/api/health` 等 API 起来，失败则返回非零状态并提示查看日志
+7. 打印访问地址和凭据文件位置，不输出完整口令
 
 **更新上线**：改完代码再跑一次 `./deploy.sh` 即可（重新构建镜像，数据库数据保留）。
 
@@ -193,7 +194,9 @@ cd zhongju-site/deploy
 | `SHARED_NETWORK` | MySQL 与 NPM 所在网络，示例默认值为 `bridge-network`，按目标环境修改 |
 | `MYSQL_ROOT_PASSWORD` | **仅首次建库用**，建完自动清空；不填就跳过建库 |
 | `STAFF_TOKEN` / `ADMIN_TOKEN` | 业务员口令 / 管理员口令，建议手改成好记的强口令 |
-| `DAILY_LIMIT` / `LOGIN_LIMIT` | 每 IP 每日建卡上限（5）、每 IP 10 分钟登录次数上限（10） |
+| `DAILY_LIMIT` / `LOGIN_LIMIT` | 每恢复身份每日建卡上限（5）、每 IP 10 分钟错误登录上限（10） |
+| `QUOTA_TIME_ZONE` | 业务配额时区，默认 `Asia/Shanghai`；前端使用服务端返回的配额与重置时间 |
+| `TRUST_PROXY` | 仅信任明确的代理链；Docker 默认 `loopback,uniquelocal`，直接运行 API 使用 `false` |
 
 ### 部署后的结构
 
@@ -236,11 +239,11 @@ python3 verify-deployment.py --base-url https://example.com
 
 ## 七、服务端名片系统（推荐正式部署时启用）
 
-启用后：名片存在 MySQL，短链/二维码在**任何设备**都能打开；换手机找管理员重新发链接；离职可一键停用。
+启用后：名片存在 MySQL，有效短链/二维码在其他设备上可打开；本人可用恢复码找回名片，管理员可停用已离职人员的名片。
 
-**双口令分层**：业务员口令（`STAFF_TOKEN`，在 `/admin` 登录，只能创建名片）与管理员口令（`ADMIN_TOKEN`，在 `/admin` 登录，可看全量列表、停用、删除）分开。口令在页面输入后由服务端校验并返回 **12 小时短期 token**，口令本身不进前端构建产物。
+**双口令分层**：业务员口令（`STAFF_TOKEN`，在 `/admin` 登录，可创建、编辑和删除本人名片）与管理员口令（`ADMIN_TOKEN`，在 `/admin` 登录，可管理全部名片）分开。口令在页面输入后由服务端校验并返回 **12 小时短期 token**，口令本身不进前端构建产物；会话保存在服务端，退出可撤销，修改某角色口令会使该角色旧 token 失效。
 
-**名片控制台 `/admin`**：不在官网任何导航中展示（noindex），网址/书签直接进入。业务员与管理员共用一个入口，登录后按口令权限显示 Tab：业务员只见「名片生成」；管理员额外有「名片管理」——搜索（姓名/手机/短码/部门）、状态筛选、停用/启用（立即生效）、删除、复制短链、打开名片。支持 `/admin?tab=list` 直达管理页。
+**名片控制台 `/admin`**：不在官网任何导航中展示（noindex），网址/书签直接进入。业务员与管理员共用一个入口，登录后按口令权限显示 Tab：业务员可创建及编辑、删除本人恢复身份所属的名片；管理员额外有「名片管理」——搜索（姓名/手机/短码/部门）、状态筛选、停用/启用（立即生效）、删除、复制短链、打开名片。支持 `/admin?tab=list` 直达管理页。
 
 ### 手动部署（一键脚本已覆盖，排错或"只跑后端"时参考）
 
@@ -254,7 +257,7 @@ docker exec -i mysql-common mysql -uroot -p'你的root密码' < server/sql/init.
 
 ```bash
 cd server
-cp .env.example .env      # 修改：DB_PASSWORD、STAFF_TOKEN、ADMIN_TOKEN、SHARED_NETWORK（docker network ls 查看）
+cp .env.example .env      # 修改：DB_PASSWORD、STAFF_TOKEN、ADMIN_TOKEN、TOKEN_SECRET、SHARED_NETWORK（docker network ls 查看）
 docker compose up -d --build
 ```
 
@@ -280,7 +283,7 @@ npm run build
 **5）本地验证（无需 MySQL）**
 
 ```bash
-cd server && node test/smoke.mjs        # 27 项冒烟测试（含角色鉴权）
+cd server && npm test                   # 主流程与安全回归测试
 node test/dev-server.mjs 8787           # 内存假库 API，配合前端联调
 ```
 
@@ -288,11 +291,21 @@ node test/dev-server.mjs 8787           # 内存假库 API，配合前端联调
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | /api/admin/login | 公开 | 口令换 12h token（限流 10 次/IP/10 分钟） |
+| POST | /api/admin/login | 公开 | 口令换 12h token（默认每 IP 10 分钟最多 10 次错误口令，另有短时请求保护） |
 | GET | /api/admin/me | 登录 | 查询当前身份与过期时间 |
-| POST | /api/cards | staff/admin | 创建名片（限流 5 次/IP/天） |
+| POST | /api/cards | staff/admin | 创建名片（默认每恢复身份 5 次/业务日） |
 | GET | /api/cards/:code | 公开 | 短码读取（停用只返回状态） |
 | PATCH | /api/cards/:code/status | admin | 停用/启用 |
-| DELETE | /api/cards/:code | admin | 删除 |
-| GET | /api/cards | admin | 全量列表（管理用） |
+| DELETE | /api/cards/:code | 本人或 admin | 删除 |
+| GET | /api/cards | admin | 分页列表，支持 q / status / limit / offset |
+| GET | /api/cards/mine | staff/admin | 当前恢复身份的服务器名片列表 |
+| PUT | /api/cards/:code | 本人或 admin | 编辑资料，保留原短码 |
+| PUT | /api/cards/:code/owner | admin | 使用本人提供的恢复码分配归属 |
+| POST | /api/admin/logout | staff/admin | 撤销当前服务器会话 |
+| GET | /api/quota | staff/admin | 查询权威配额与重置时间 |
 | GET | /api/health | 公开 | 健康检查 |
+
+
+## 安全修复与升级
+
+本轮修复、旧数据迁移、恢复码使用与剩余产品边界见 [`docs/security-fixes.md`](docs/security-fixes.md)。开发环境需 Node.js 22.12+；Docker 使用 Node.js 24。运行 `npm ci`、`npm --prefix server ci` 后执行 `npm test` 与 `npm run build`。

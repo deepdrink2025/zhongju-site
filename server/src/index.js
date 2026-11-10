@@ -3,6 +3,7 @@
  */
 import { pool, ensureSchema, waitForDb } from './db.js';
 import { createApp } from './app.js';
+import { validateProductionSecrets } from './security.js';
 
 const PORT = Number(process.env.PORT || 8787);
 
@@ -10,15 +11,23 @@ const adminToken = process.env.ADMIN_TOKEN || '';
 const staffToken = process.env.STAFF_TOKEN || '';
 
 // 生产环境必须显式配置双口令，避免带着默认口令上线
-if (process.env.NODE_ENV === 'production' && (!adminToken || !staffToken)) {
-  console.error('[card-server] 启动失败：生产环境必须配置 ADMIN_TOKEN 与 STAFF_TOKEN（见 deploy/.env）');
-  process.exit(1);
+if (process.env.NODE_ENV === 'production') {
+  try {
+    validateProductionSecrets({
+      adminToken,
+      staffToken,
+      tokenSecret: process.env.TOKEN_SECRET || '',
+    });
+  } catch (error) {
+    console.error('[card-server] ' + error.message);
+    process.exit(1);
+  }
 }
 
 const app = createApp({
   pool,
-  adminToken: adminToken || 'zhongju-admin-2026',
-  staffToken: staffToken || 'zhongju2026',
+  adminToken,
+  staffToken,
   tokenSecret: process.env.TOKEN_SECRET || '',
   dailyLimit: Number(process.env.DAILY_LIMIT || 5),
   loginLimit: Number(process.env.LOGIN_LIMIT || 10),

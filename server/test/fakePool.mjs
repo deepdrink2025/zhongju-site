@@ -1,9 +1,12 @@
 /**
  * 内存假库：模拟本项目用到的 SQL（供冒烟测试与本地联调使用，不连 MySQL）
  */
+import { fakeRepository } from './fakeRepository.mjs';
 export function fakePool() {
-  const rows = [];
+  const repository = fakeRepository();
+  const rows = repository.rows;
   return {
+    repository,
     rows,
     async query(sql, params = []) {
       const s = sql.replace(/\s+/g, ' ').trim();

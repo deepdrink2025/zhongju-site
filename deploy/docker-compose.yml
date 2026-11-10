@@ -18,10 +18,13 @@ services:
       TOKEN_SECRET: ${TOKEN_SECRET:-}
       DAILY_LIMIT: ${DAILY_LIMIT:-5}
       LOGIN_LIMIT: ${LOGIN_LIMIT:-10}
+      TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
+      QUOTA_TIME_ZONE: ${QUOTA_TIME_ZONE:-Asia/Shanghai}
       PORT: "8787"
     networks:
       - internal
       - shared
+    init: true
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/api/health"]
       interval: 30s

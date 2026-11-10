@@ -4,15 +4,6 @@
  * 如需严格权限控制，需引入后端服务。
  */
 
-/** 云名片生成页（/create）访问口令，请修改为公司内部口令 */
-export const CREATE_PASSCODE = 'zhongju2026';
-
-/** 口令验证通过后的本机记忆时长（毫秒）：默认 30 天 */
-export const PASSCODE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-/** sessionStorage/localStorage 键名 */
-export const PASSCODE_STORAGE_KEY = 'zhongju_create_unlocked_at';
-
 /* ---------------- 服务端名片 API ---------------- */
 
 /**

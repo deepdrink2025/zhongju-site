@@ -1,160 +1,198 @@
-/**
- * 名片数据门面层（Facade）
- *
- * 统一两种运行模式，页面只调用本文件，不关心数据来自本地还是服务端：
- *  - 本地模式（默认）：浏览器 localStorage，纯静态部署可用
- *  - 服务端模式（VITE_CARD_SERVER=on）：调用 /api/cards，短链全网有效
- *
- * 服务端接口契约见 server/src/app.js，字段与 CardRecord 完全一致。
- */
 import { CARD_API_BASE, CARD_SERVER_MODE } from '../config';
-import { getToken } from './cardAuth';
+import { expireAuth, getRole, getToken } from './cardAuth';
 import type { CardData } from './cardCodec';
 import * as local from './cardService';
 import type { CardRecord } from './cardService';
-
 export { cardUrlOfCode, todayGenCount, DAILY_GEN_LIMIT, validateCardData } from './cardService';
 export type { CardRecord };
-
-/** 查询名片的结果状态 */
+export const IS_SERVER_MODE = CARD_SERVER_MODE;
 export type FetchResult =
   | { status: 'active'; record: CardRecord }
   | { status: 'disabled' }
   | { status: 'notfound' }
   | { status: 'error'; error: string };
-
-export type CreateOutcome =
-  | { ok: true; record: CardRecord }
-  | { ok: false; error: string };
-
-export const IS_SERVER_MODE = CARD_SERVER_MODE;
-
-function apiUrl(path: string): string {
-  return `${CARD_API_BASE}${path}`;
+export type CreateOutcome = { ok: true; record: CardRecord } | { ok: false; error: string };
+export interface Quota {
+  used: number;
+  limit: number;
+  remaining: number;
+  resetAt: number;
+  timeZone: string;
 }
-
-const TIMEOUT_MS = 12000;
-
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
+export interface Counts {
+  total: number;
+  active: number;
+  disabled: number;
+}
+export interface ListOptions {
+  keyword?: string;
+  status?: 'all' | 'active' | 'disabled';
+  offset?: number;
+  limit?: number;
+}
+export type ListOutcome =
+  | { ok: true; items: CardRecord[]; total: number; counts: Counts }
+  | { ok: false; error: string };
+interface ApiResult {
+  ok?: boolean;
+  error?: string;
+  record?: CardRecord;
+  items?: CardRecord[];
+  total?: number;
+  counts?: Counts;
+  quota?: Quota;
+  status?: string;
+}
+const headers = () => ({
+  'Content-Type': 'application/json',
+  ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+});
+async function request(
+  path: string,
+  init: RequestInit = {}
+): Promise<{ response: Response; data: ApiResult }> {
+  const controller = new AbortController(),
+    timer = window.setTimeout(() => controller.abort(), 12000);
   try {
-    return await fetch(apiUrl(path), { ...init, signal: controller.signal });
+    const response = await fetch(`${CARD_API_BASE}${path}`, {
+      ...init,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    const data = (await response
+      .json()
+      .catch(() => ({ error: '服务器响应格式不正确' }))) as ApiResult;
+    if (response.status === 401 && init.headers) expireAuth();
+    return { response, data };
   } finally {
     window.clearTimeout(timer);
   }
 }
-
-function jsonHeaders(): HeadersInit {
-  const token = getToken();
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
-
-/** 创建名片 */
 export async function createCardAsync(data: CardData): Promise<CreateOutcome> {
-  if (!IS_SERVER_MODE) {
-    const res = local.createCard(data);
-    return res.ok ? res : { ok: false, error: res.error };
-  }
-  if (!getToken()) return { ok: false, error: '登录已过期，请刷新页面重新进入' };
+  if (!IS_SERVER_MODE) return local.createCard(data);
   try {
-    const resp = await request('/api/cards', {
+    const result = await request('/api/cards', {
       method: 'POST',
-      headers: jsonHeaders(),
+      headers: headers(),
       body: JSON.stringify(data),
     });
-    if (resp.status === 401) return { ok: false, error: '登录已过期，请刷新页面重新进入' };
-    const json = await resp.json().catch(() => null);
-    if (!resp.ok || !json?.ok) {
-      return { ok: false, error: json?.error || `创建失败（${resp.status}）` };
-    }
-    const record = json.record as CardRecord;
-    local.rememberCode(record.shortCode);
-    local.recordGeneration();
-    return { ok: true, record };
+    if (!result.response.ok || !result.data.record)
+      return { ok: false, error: result.data.error || '创建失败' };
+    local.rememberCode(result.data.record.shortCode);
+    return { ok: true, record: result.data.record };
   } catch {
-    return { ok: false, error: '网络异常，请检查网络后重试' };
+    return { ok: false, error: '网络异常，请稍后重试' };
   }
 }
-
-/** 按短码查询名片 */
-export async function fetchCardAsync(code: string): Promise<FetchResult> {
+export async function updateCardAsync(code: string, data: CardData): Promise<CreateOutcome> {
+  if (!IS_SERVER_MODE) return local.updateCard(code, data);
+  try {
+    const result = await request(`/api/cards/${encodeURIComponent(code)}`, {
+      method: 'PUT',
+      headers: headers(),
+      body: JSON.stringify(data),
+    });
+    return result.response.ok && result.data.record
+      ? { ok: true, record: result.data.record }
+      : { ok: false, error: result.data.error || '修改失败' };
+  } catch {
+    return { ok: false, error: '网络异常，请稍后重试' };
+  }
+}
+export async function fetchEditableCardAsync(code: string): Promise<CreateOutcome> {
   if (!IS_SERVER_MODE) {
-    const rec = local.getCardByCode(code);
-    if (!rec) return { status: 'notfound' };
-    return rec.status === 'disabled' ? { status: 'disabled' } : { status: 'active', record: rec };
+    const found = local.getCardByCode(code);
+    return found ? { ok: true, record: found } : { ok: false, error: '未找到该名片' };
   }
   try {
-    const resp = await request(`/api/cards/${encodeURIComponent(code)}`);
-    if (resp.status === 404) return { status: 'notfound' };
-    const json = await resp.json().catch(() => null);
-    if (!resp.ok || !json?.ok) {
-      return { status: 'error', error: json?.error || `请求失败（${resp.status}）` };
-    }
-    if (json.status === 'disabled') return { status: 'disabled' };
-    return { status: 'active', record: json.record as CardRecord };
+    const result = await request(`/api/cards/${encodeURIComponent(code)}/manage`, {
+      headers: headers(),
+    });
+    return result.response.ok && result.data.record
+      ? { ok: true, record: result.data.record }
+      : { ok: false, error: result.data.error || '无法编辑该名片' };
+  } catch {
+    return { ok: false, error: '网络异常，请稍后重试' };
+  }
+}
+export async function fetchCardAsync(code: string): Promise<FetchResult> {
+  if (!IS_SERVER_MODE) {
+    const found = local.getCardByCode(code);
+    return !found
+      ? { status: 'notfound' }
+      : found.status === 'disabled'
+        ? { status: 'disabled' }
+        : { status: 'active', record: found };
+  }
+  try {
+    const { response, data } = await request(`/api/cards/${encodeURIComponent(code)}`);
+    if (response.status === 404) return { status: 'notfound' };
+    if (!response.ok || !data.ok) return { status: 'error', error: data.error || '加载失败' };
+    if (data.status === 'disabled') return { status: 'disabled' };
+    return data.record
+      ? { status: 'active', record: data.record }
+      : { status: 'error', error: '名片数据不完整' };
   } catch {
     return { status: 'error', error: '网络异常，请稍后重试' };
   }
 }
-
-/** 本机生成过的名片列表（本地模式读存储；服务端模式按短码逐个取回） */
 export async function listMyCardsAsync(): Promise<CardRecord[]> {
   if (!IS_SERVER_MODE) return local.listMyRecords();
-  const codes = local.myCodes();
-  if (codes.length === 0) return [];
-  const results = await Promise.all(
-    codes.map(async (code) => ({ code, res: await fetchCardAsync(code) }))
-  );
-  const out: CardRecord[] = [];
-  for (const { code, res } of results) {
-    if (res.status === 'active') {
-      out.push(res.record);
-    } else if (res.status === 'disabled') {
-      // 已停用：保留占位记录便于本人看到状态
-      out.push({
+  const records = new Map<string, CardRecord>();
+  for (let offset = 0; ; offset += 100) {
+    const { response, data } = await request(`/api/cards/mine?limit=100&offset=${offset}`, {
+      headers: headers(),
+    });
+    if (!response.ok || !data.ok) throw new Error(data.error || '本设备名片加载失败');
+    for (const card of data.items || []) records.set(card.shortCode, card);
+    if (offset + (data.items?.length || 0) >= (data.total || 0) || !data.items?.length) break;
+  }
+  // Old browser indexes only retain read access; public codes cannot grant ownership.
+  for (const code of local.myCodes().filter((value) => !records.has(value))) {
+    const result = await fetchCardAsync(code);
+    if (result.status === 'notfound') local.forgetCode(code);
+    else if (result.status === 'active')
+      records.set(code, {
+        ...result.record,
+        permissions: { edit: getRole() === 'admin', delete: getRole() === 'admin' },
+      });
+    else if (result.status === 'disabled')
+      records.set(code, {
         id: code,
         shortCode: code,
         name: '已停用',
+        phone: '',
         title: '',
         department: '',
-        phone: '',
         wechat: '',
         bio: '',
-        avatar: '',
         status: 'disabled',
         createdAt: 0,
         updatedAt: 0,
+        permissions: { edit: getRole() === 'admin', delete: getRole() === 'admin' },
       });
-    } else if (res.status === 'notfound') {
-      local.forgetCode(code); // 已被删除，清掉本机索引
-    }
   }
-  return out;
+  return [...records.values()].sort((a, b) => b.createdAt - a.createdAt);
 }
-
-/** 删除名片 */
 export async function removeCardAsync(code: string): Promise<boolean> {
   if (!IS_SERVER_MODE) {
     local.deleteCard(code);
     return true;
   }
   try {
-    const resp = await request(`/api/cards/${encodeURIComponent(code)}`, {
+    const { response } = await request(`/api/cards/${encodeURIComponent(code)}`, {
       method: 'DELETE',
-      headers: jsonHeaders(),
+      headers: headers(),
     });
-    local.forgetCode(code);
-    return resp.ok;
+    if (response.ok || response.status === 404) {
+      local.forgetCode(code);
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
 }
-
-/** 启用 / 停用（管理用） */
 export async function setCardStatusAsync(
   code: string,
   status: CardRecord['status']
@@ -164,36 +202,90 @@ export async function setCardStatusAsync(
     return true;
   }
   try {
-    const resp = await request(`/api/cards/${encodeURIComponent(code)}/status`, {
-      method: 'PATCH',
-      headers: jsonHeaders(),
-      body: JSON.stringify({ status }),
-    });
-    return resp.ok;
+    return (
+      await request(`/api/cards/${encodeURIComponent(code)}/status`, {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ status }),
+      })
+    ).response.ok;
   } catch {
     return false;
   }
 }
-
-/** 管理员：全量名片列表 */
-export async function listAllCardsAsync(): Promise<
-  { ok: true; items: CardRecord[] } | { ok: false; error: string }
-> {
+export async function listAllCardsAsync(options: ListOptions = {}): Promise<ListOutcome> {
   if (!IS_SERVER_MODE) {
-    // 本地模式没有"全量"，返回本机名片便于预览管理员页结构
-    return { ok: true, items: local.listMyRecords() };
+    const keyword = (options.keyword || '').toLowerCase();
+    const all = local
+      .listMyRecords()
+      .filter((card) =>
+        [card.name, card.phone, card.shortCode, card.title, card.department].some((value) =>
+          value.toLowerCase().includes(keyword)
+        )
+      );
+    const counts = {
+      total: all.length,
+      active: all.filter((card) => card.status === 'active').length,
+      disabled: all.filter((card) => card.status === 'disabled').length,
+    };
+    const filtered = all.filter(
+        (card) => !options.status || options.status === 'all' || card.status === options.status
+      ),
+      offset = options.offset || 0;
+    return {
+      ok: true,
+      items: filtered.slice(offset, offset + (options.limit || 50)),
+      total: filtered.length,
+      counts,
+    };
   }
-  if (!getToken()) return { ok: false, error: '登录已过期，请重新登录' };
   try {
-    const resp = await request('/api/cards?limit=500', { headers: jsonHeaders() });
-    if (resp.status === 403) return { ok: false, error: '当前口令没有管理权限' };
-    if (resp.status === 401) return { ok: false, error: '登录已过期，请重新登录' };
-    const json = await resp.json().catch(() => null);
-    if (!resp.ok || !json?.ok) {
-      return { ok: false, error: json?.error || `加载失败（${resp.status}）` };
-    }
-    return { ok: true, items: (json.items || []) as CardRecord[] };
+    const query = new URLSearchParams({
+      limit: String(options.limit || 50),
+      offset: String(options.offset || 0),
+      q: options.keyword || '',
+      status: options.status || 'all',
+    });
+    const { response, data } = await request(`/api/cards?${query}`, { headers: headers() });
+    if (!response.ok || !data.ok) return { ok: false, error: data.error || '列表加载失败' };
+    return {
+      ok: true,
+      items: data.items || [],
+      total: data.total || 0,
+      counts: data.counts || { total: 0, active: 0, disabled: 0 },
+    };
   } catch {
     return { ok: false, error: '网络异常，请稍后重试' };
+  }
+}
+export async function fetchQuotaAsync(): Promise<Quota | null> {
+  if (!IS_SERVER_MODE) {
+    const used = local.todayGenCount();
+    return {
+      used,
+      limit: local.DAILY_GEN_LIMIT,
+      remaining: Math.max(0, local.DAILY_GEN_LIMIT - used),
+      resetAt: 0,
+      timeZone: '',
+    };
+  }
+  try {
+    const { response, data } = await request('/api/quota', { headers: headers() });
+    return response.ok ? data.quota || null : null;
+  } catch {
+    return null;
+  }
+}
+export async function assignCardOwnerAsync(code: string, deviceId: string): Promise<boolean> {
+  try {
+    return (
+      await request(`/api/cards/${encodeURIComponent(code)}/owner`, {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify({ deviceId }),
+      })
+    ).response.ok;
+  } catch {
+    return false;
   }
 }

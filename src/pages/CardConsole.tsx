@@ -4,18 +4,12 @@ import Icon from '../components/Icon';
 import { company } from '../data/company';
 import { CardCreatePanel } from '../components/CardCreatePanel';
 import AdminCardList from '../components/AdminCardList';
-import { clearAuth, getAuth, login, type Role } from '../utils/cardAuth';
+import { AUTH_EXPIRED_EVENT, getAuth, login, logout, type Role } from '../utils/cardAuth';
 import { IS_SERVER_MODE } from '../utils/cardStore';
 
 type Tab = 'create' | 'list';
 
-function ConsoleTopBar({
-  role,
-  onLogout,
-}: {
-  role: Role | null;
-  onLogout?: () => void;
-}) {
+function ConsoleTopBar({ role, onLogout }: { role: Role | null; onLogout?: () => void }) {
   return (
     <div className="border-b border-neutral-200/80 bg-white/85 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
@@ -61,13 +55,14 @@ function ConsoleGate({ onUnlock }: { onUnlock: (role: Role) => void }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
     setError('');
     setBusy(true);
-    const res = await login(code);
+    const res = await login(code, recoveryCode);
     setBusy(false);
     if (!res.ok) {
       setError(res.error);
@@ -102,6 +97,19 @@ function ConsoleGate({ onUnlock }: { onUnlock: (role: Role) => void }) {
             autoFocus
             className="mt-6 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-center text-base tracking-widest outline-none transition placeholder:text-neutral-400 focus:border-brand-400"
           />
+          <details className="mt-4 text-left text-sm text-neutral-500">
+            <summary className="cursor-pointer">换设备或恢复以前的名片</summary>
+            <p className="mt-2 text-xs">填写之前保存的恢复码；首次使用留空即可。</p>
+            <input
+              type="password"
+              value={recoveryCode}
+              onChange={(e) => setRecoveryCode(e.target.value.trim())}
+              maxLength={32}
+              autoComplete="off"
+              placeholder="32 位恢复码（可选）"
+              className="mt-2 w-full rounded-lg border px-3 py-2"
+            />
+          </details>
           {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
           <button
             type="submit"
@@ -142,6 +150,12 @@ export default function CardConsole() {
   }, [tab, role]);
 
   useEffect(() => {
+    const expired = () => setRole(null);
+    window.addEventListener(AUTH_EXPIRED_EVENT, expired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
+  }, []);
+
+  useEffect(() => {
     const meta = document.createElement('meta');
     meta.name = 'robots';
     meta.content = 'noindex, nofollow';
@@ -159,8 +173,8 @@ export default function CardConsole() {
         role={role}
         onLogout={
           IS_SERVER_MODE
-            ? () => {
-                clearAuth();
+            ? async () => {
+                await logout();
                 setRole(null);
               }
             : undefined

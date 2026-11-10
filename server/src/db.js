@@ -39,10 +39,27 @@ export async function ensureSchema() {
       status      ENUM('active','disabled') NOT NULL DEFAULT 'active',
       created_at  BIGINT       NOT NULL,
       updated_at  BIGINT       NOT NULL,
+      owner_key   CHAR(64)     NULL,
       INDEX idx_phone (phone),
-      INDEX idx_created (created_at)
+      INDEX idx_created (created_at),
+      INDEX idx_owner_created (owner_key, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  const [columns] = await pool.query(
+    "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cards' AND COLUMN_NAME = 'owner_key'"
+  );
+  if (!columns.length)
+    await pool.query(
+      'ALTER TABLE cards ADD COLUMN owner_key CHAR(64) NULL, ADD INDEX idx_owner_created (owner_key, created_at)'
+    );
+  await pool.query(`CREATE TABLE IF NOT EXISTS card_sessions (
+    id CHAR(32) NOT NULL PRIMARY KEY, role VARCHAR(8) NOT NULL, owner_key CHAR(64) NOT NULL,
+    expires_at BIGINT NOT NULL, revoked_at BIGINT NULL, INDEX idx_expiry (expires_at)
+  ) ENGINE=InnoDB`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS card_daily_usage (
+    owner_key CHAR(64) NOT NULL, day_key CHAR(10) NOT NULL, used INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (owner_key, day_key), INDEX idx_day (day_key)
+  ) ENGINE=InnoDB`);
 }
 
 /** 启动自检：连不上库时给出清晰错误，避免容器静默重启 */

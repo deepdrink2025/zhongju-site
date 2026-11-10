@@ -6,13 +6,16 @@
   "description": "中聚人力电子名片服务端（Node.js + MySQL）",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test": "node test/smoke.mjs && node --test test/security.test.mjs",
+    "test:mysql": "node test/mysql-integration.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "mysql2": "^3.11.5"
+    "mysql2": "^3.11.5",
+    "sharp": "^0.35.5"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   }
 }

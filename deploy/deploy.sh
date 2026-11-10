@@ -129,16 +129,17 @@ do_deploy() {
     DB_PASSWORD="$(rand_secret 20)"; set_env DB_PASSWORD "$DB_PASSWORD"; changed=1
   fi
   if is_placeholder "$STAFF_TOKEN"; then
-    STAFF_TOKEN="$(rand_secret 10)"; set_env STAFF_TOKEN "$STAFF_TOKEN"; changed=1
+    STAFF_TOKEN="$(rand_secret 32)"; set_env STAFF_TOKEN "$STAFF_TOKEN"; changed=1
   fi
   if is_placeholder "$ADMIN_TOKEN"; then
-    ADMIN_TOKEN="$(rand_secret 12)"; set_env ADMIN_TOKEN "$ADMIN_TOKEN"; changed=1
+    ADMIN_TOKEN="$(rand_secret 32)"; set_env ADMIN_TOKEN "$ADMIN_TOKEN"; changed=1
   fi
   if [ -z "$TOKEN_SECRET" ]; then
     TOKEN_SECRET="$(rand_secret 32)"; set_env TOKEN_SECRET "$TOKEN_SECRET"; changed=1
   fi
   [ "$changed" = 1 ] && ok "已把口令/密钥的占位符替换为随机强密码（见 deploy/.env）"
-  [ "$STAFF_TOKEN" = "$ADMIN_TOKEN" ] && warn "业务员口令与管理员口令相同，建议改成不同值"
+  [ "$STAFF_TOKEN" != "$ADMIN_TOKEN" ] || die "业务员口令与管理员口令必须不同"
+  [ "${#STAFF_TOKEN}" -ge 16 ] && [ "${#ADMIN_TOKEN}" -ge 16 ] && [ "${#TOKEN_SECRET}" -ge 32 ] || die "口令至少 16 位，TOKEN_SECRET 至少 32 位"
 
   # ---- 3. 网络 ----
   if docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1; then
@@ -165,6 +166,7 @@ do_deploy() {
       esc_user="$(printf '%s' "$DB_USER" | sed "s/'/''/g")"
       esc_name="$(printf '%s' "$DB_NAME" | sed "s/'/''/g")"
       if {
+        printf '%s\n' "$MYSQL_ROOT_PASSWORD"
         cat <<SQL
 SET NAMES utf8mb4;
 CREATE DATABASE IF NOT EXISTS \`$esc_name\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -173,7 +175,7 @@ ALTER USER '$esc_user'@'%' IDENTIFIED BY '$esc_pw';
 GRANT ALL PRIVILEGES ON \`$esc_name\`.* TO '$esc_user'@'%';
 FLUSH PRIVILEGES;
 SQL
-      } | docker exec -i "$DB_HOST" mysql -uroot -p"$MYSQL_ROOT_PASSWORD" >/dev/null 2>&1; then
+      } | docker exec -i "$DB_HOST" sh -c 'IFS= read -r MYSQL_PWD; export MYSQL_PWD; exec mysql -uroot' >/dev/null 2>&1; then
         ok "数据库就绪（表结构由 API 启动时自动创建）"
         set_env MYSQL_ROOT_PASSWORD ""   # 建库成功后清空，避免 root 密码留在文件里
         ok "已清空 .env 里的 MYSQL_ROOT_PASSWORD（root 密码不必留在文件中）"
@@ -203,6 +205,7 @@ SQL
   else
     warn "API 还没起来，看日志排查："
     printf '        %s --env-file %s -f %s -f %s logs --tail=80 api\n' "${DC[*]}" "$ENV_FILE" "$COMPOSE_FILE" "$COMPOSE_OVERRIDE"
+    die "健康检查失败，部署未就绪"
   fi
 
   # ---- 7. 汇总 ----
@@ -214,9 +217,7 @@ SQL
   printf '  公网入口      Nginx Proxy Manager → http://zhongju-site-web:80\n'
   printf '  域名与证书    在 Nginx Proxy Manager 面板中配置\n'
   echo
-  printf '  %s业务员口令     %s%s\n' "$C_B" "$STAFF_TOKEN" "$C_0"
-  printf '  %s管理员口令     %s%s\n' "$C_B" "$ADMIN_TOKEN" "$C_0"
-  printf '  （都写在 %s，改了要重新 ./deploy.sh 生效）\n' "$ENV_FILE"
+  printf '  登录口令保存在 %s（权限应为 0600）；修改后重新部署生效\n' "$ENV_FILE"
   echo
   printf '  常用命令：./deploy.sh ps | logs | restart | down\n'
   printf '%s==========================================%s\n' "$C_B" "$C_0"

@@ -1,94 +1,99 @@
-/**
- * 名片服务端登录态（sessionStorage 存短期 token，不把口令打进前端包）
- * - 登录：POST /api/admin/login { passcode } → { token, role, exp }
- * - 角色：admin（可看全量列表、停用、删除）/ staff（仅创建自己的名片）
- * - token 有效期 12 小时，存在 sessionStorage：关闭浏览器即失效
- */
 import { CARD_API_BASE } from '../config';
-
-const TOKEN_KEY = 'zhongju_card_auth';
-
+const TOKEN_KEY = 'zhongju_card_auth',
+  DEVICE_KEY = 'zhongju_card_device';
+export const AUTH_EXPIRED_EVENT = 'card-auth-expired';
 export type Role = 'admin' | 'staff';
-
 export interface AuthState {
   token: string;
   role: Role;
   exp: number;
 }
-
-function read(): AuthState | null {
+export type LoginResult = { ok: true; role: Role; exp: number } | { ok: false; error: string };
+export function getAuth(): AuthState | null {
   try {
-    const raw = sessionStorage.getItem(TOKEN_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw) as AuthState;
-    if (!data?.token || typeof data.exp !== 'number') return null;
-    if (data.exp < Date.now()) return null;
-    return data;
+    const data = JSON.parse(sessionStorage.getItem(TOKEN_KEY) || 'null') as AuthState | null;
+    return data &&
+      typeof data.token === 'string' &&
+      ['staff', 'admin'].includes(data.role) &&
+      Number.isFinite(data.exp) &&
+      data.exp > Date.now()
+      ? data
+      : null;
   } catch {
     return null;
   }
 }
-
-/** 当前登录态（过期返回 null） */
-export function getAuth(): AuthState | null {
-  return read();
-}
-
-/** 取 token（供请求头使用） */
-export function getToken(): string | null {
-  return read()?.token ?? null;
-}
-
-export function getRole(): Role | null {
-  return read()?.role ?? null;
-}
-
-/** 是否已登录（可指定要求的角色） */
+export const getToken = () => getAuth()?.token ?? null;
+export const getRole = () => getAuth()?.role ?? null;
 export function isLoggedIn(roles?: Role | Role[]): boolean {
-  const auth = read();
-  if (!auth) return false;
-  if (!roles) return true;
-  const list = Array.isArray(roles) ? roles : [roles];
-  return list.includes(auth.role);
+  const auth = getAuth();
+  return !!auth && (!roles || (Array.isArray(roles) ? roles : [roles]).includes(auth.role));
 }
-
 export function clearAuth(): void {
   try {
     sessionStorage.removeItem(TOKEN_KEY);
   } catch {
-    /* ignore */
+    /* unavailable */
   }
 }
-
-export type LoginResult =
-  | { ok: true; role: Role; exp: number }
-  | { ok: false; error: string };
-
-/** 口令登录 */
-export async function login(passcode: string): Promise<LoginResult> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 12000);
+export function expireAuth(): void {
+  clearAuth();
+  window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+}
+export function getRecoveryCode(): string {
+  const existing = localStorage.getItem(DEVICE_KEY);
+  if (existing && /^[a-f0-9]{32}$/.test(existing)) return existing;
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const value = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem(DEVICE_KEY, value);
+  return value;
+}
+export async function login(passcode: string, recoveryCode = ''): Promise<LoginResult> {
+  const controller = new AbortController(),
+    timer = window.setTimeout(() => controller.abort(), 12000);
   try {
-    const resp = await fetch(`${CARD_API_BASE}/api/admin/login`, {
+    const deviceId = recoveryCode.trim().toLowerCase() || getRecoveryCode();
+    if (!/^[a-f0-9]{32}$/.test(deviceId))
+      return { ok: false, error: '恢复码应为 32 位字母数字组合' };
+    const response = await fetch(`${CARD_API_BASE}/api/admin/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ passcode: passcode.trim() }),
+      body: JSON.stringify({ passcode: passcode.trim(), deviceId }),
       signal: controller.signal,
+      cache: 'no-store',
     });
-    const json = await resp.json().catch(() => null);
-    if (!resp.ok || !json?.ok) {
-      return { ok: false, error: json?.error || `登录失败（${resp.status}）` };
-    }
-    const auth: AuthState = { token: json.token, role: json.role, exp: json.exp };
-    try {
-      sessionStorage.setItem(TOKEN_KEY, JSON.stringify(auth));
-    } catch {
-      /* ignore */
-    }
-    return { ok: true, role: json.role, exp: json.exp };
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok)
+      return { ok: false, error: data?.error || `登录失败（${response.status}）` };
+    localStorage.setItem(DEVICE_KEY, deviceId);
+    sessionStorage.setItem(
+      TOKEN_KEY,
+      JSON.stringify({ token: data.token, role: data.role, exp: data.exp })
+    );
+    return { ok: true, role: data.role, exp: data.exp };
   } catch {
-    return { ok: false, error: '网络异常，请稍后重试' };
+    return { ok: false, error: '无法登录，请检查网络并允许浏览器保存本设备数据' };
   } finally {
     window.clearTimeout(timer);
+  }
+}
+export async function logout(): Promise<void> {
+  const token = getToken(),
+    controller = new AbortController(),
+    timer = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    if (token)
+      await fetch(`${CARD_API_BASE}/api/admin/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+  } catch {
+    /* Offline sign-out only clears this browser; the server session still has its expiry. */
+  } finally {
+    window.clearTimeout(timer);
+    clearAuth();
   }
 }

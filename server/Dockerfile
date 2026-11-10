@@ -1,5 +1,5 @@
 # 中聚人力电子名片服务端
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -12,6 +12,7 @@ COPY src ./src
 ENV NODE_ENV=production \
     PORT=8787
 
+USER node
 EXPOSE 8787
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
