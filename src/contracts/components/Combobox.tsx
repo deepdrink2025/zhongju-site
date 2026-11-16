@@ -57,7 +57,7 @@ export default function Combobox({
             <button
               key={o.value}
               type="button"
-              className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-brand-50 ${o.value === value ? 'text-brand-700 font-medium' : 'text-slate-700'}`}
+              className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-ct-50 ${o.value === value ? 'text-ct-700 font-medium' : 'text-slate-700'}`}
               onClick={() => {
                 onChange(o.value);
                 setOpen(false);

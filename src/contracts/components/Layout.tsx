@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { ROLE_LABELS, LOGIN_ROLES } from '../types';
-import { useAuth } from '../App';
+import { useAuth } from '../ContractsApp';
 import Modal from './Modal';
 
 function ChangePasswordModal({ onClose }: { onClose: () => void }) {
@@ -62,7 +62,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       /* 忽略 */
     }
     setUser(null);
-    navigate('/login');
+    navigate('/contracts/login');
   }
 
   const link = (to: string, label: string) => (
@@ -71,7 +71,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       to={to}
       end={to === '/'}
       className={({ isActive }) =>
-        `rounded-lg px-3 py-1.5 text-sm font-medium ${isActive ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`
+        `rounded-lg px-3 py-1.5 text-sm font-medium ${isActive ? 'bg-ct-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`
       }
     >
       {label}
@@ -82,7 +82,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-4 py-3">
-          <Link to="/" className="text-base font-bold text-brand-700">
+          <Link to="/contracts" className="text-base font-bold text-ct-700">
             中聚人力 · 合同管理
           </Link>
           <nav className="flex items-center gap-1">

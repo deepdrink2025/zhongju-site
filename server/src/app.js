@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { createRepository } from './repository.js';
 import { WindowLimiter, normalizeCard, quotaClock, trustProxyConfig } from './security.js';
+import { createContractRouter } from './contracts/router.js';
 
 const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const TTL = 12 * 3600000;
@@ -327,6 +328,9 @@ export function createApp({
       res.json({ ok: true });
     })
   );
+  // 合同管理模块（内部业务）：挂载在 /api/contract 下，与名片 API 共用进程与连接池
+  app.use('/api/contract', createContractRouter(pool, { filesDir: process.env.FILES_DIR }));
+
   app.use((_req, _res, next) => next(error(404, 'not_found')));
   app.use((err, _req, res, _next) => {
     const status =

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, setToken } from '../api';
 import type { AuthUser } from '../types';
-import { useAuth } from '../App';
+import { useAuth } from '../ContractsApp';
 
 export default function Login() {
   const { setUser } = useAuth();
@@ -23,7 +23,7 @@ export default function Login() {
       });
       setToken(d.token);
       setUser(d.user);
-      navigate('/');
+      navigate('/contracts');
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -34,7 +34,7 @@ export default function Login() {
   return (
     <div className="grid min-h-screen place-items-center bg-slate-100 px-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-md">
-        <h1 className="mb-1 text-center text-xl font-bold text-brand-700">中聚人力 · 合同管理</h1>
+        <h1 className="mb-1 text-center text-xl font-bold text-ct-700">中聚人力 · 合同管理</h1>
         <p className="mb-6 text-center text-xs text-slate-400">内部系统，请使用公司分配的账号登录</p>
         <form onSubmit={submit} className="space-y-4">
           <div>

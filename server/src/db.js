@@ -3,6 +3,7 @@
  * 生产环境连接 mysql-common 容器（桥接网络内按容器名访问）
  */
 import mysql from 'mysql2/promise';
+import { ensureContractSchema } from './contracts/schema.js';
 
 const DB_HOST = process.env.DB_HOST || 'mysql-common';
 const DB_PORT = Number(process.env.DB_PORT || 3306);
@@ -60,6 +61,9 @@ export async function ensureSchema() {
     owner_key CHAR(64) NOT NULL, day_key CHAR(10) NOT NULL, used INT UNSIGNED NOT NULL DEFAULT 0,
     PRIMARY KEY (owner_key, day_key), INDEX idx_day (day_key)
   ) ENGINE=InnoDB`);
+
+  // 合同管理模块的表（与名片表共存于同一库）
+  await ensureContractSchema(pool);
 }
 
 /** 启动自检：连不上库时给出清晰错误，避免容器静默重启 */

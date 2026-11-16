@@ -17,14 +17,16 @@ function fixName(name) {
   }
 }
 
-export function buildApp(pool, opts = {}) {
-  const app = express();
+export function createContractRouter(pool, opts = {}) {
+  const router = express.Router();
   const FILES_DIR = opts.filesDir || process.env.FILES_DIR || '/data/files';
-  fs.mkdirSync(FILES_DIR, { recursive: true });
+  try {
+    fs.mkdirSync(FILES_DIR, { recursive: true });
+  } catch {
+    // 无权限环境（如单元测试）跳过，上传附件时会再尝试创建
+  }
 
-  app.disable('x-powered-by');
-  app.use(express.json({ limit: '1mb' }));
-  app.use((req, res, next) => {
+  router.use((_req, res, next) => {
     res.set('X-Robots-Tag', 'noindex');
     next();
   });
@@ -58,13 +60,13 @@ export function buildApp(pool, opts = {}) {
   }
 
   async function ensureCustomer(conn, name) {
-    await conn.query('INSERT INTO customers (name) VALUES (?) ON DUPLICATE KEY UPDATE name = VALUES(name)', [name]);
-    const [rows] = await conn.query('SELECT id FROM customers WHERE name = ? LIMIT 1', [name]);
+    await conn.query('INSERT INTO contract_customers (name) VALUES (?) ON DUPLICATE KEY UPDATE name = VALUES(name)', [name]);
+    const [rows] = await conn.query('SELECT id FROM contract_customers WHERE name = ? LIMIT 1', [name]);
     return rows[0].id;
   }
 
   // ---------- 健康检查 ----------
-  app.get('/api/contract/health', async (_req, res) => {
+  router.get('/health', async (_req, res) => {
     try {
       await pool.query('SELECT 1');
       res.json({ ok: true });
@@ -77,7 +79,7 @@ export function buildApp(pool, opts = {}) {
   async function addLoginLog(username, userId, ip, success) {
     try {
       await pool.query(
-        'INSERT INTO login_logs (username, user_id, ip, success) VALUES (?, ?, ?, ?)',
+        'INSERT INTO contract_login_logs (username, user_id, ip, success) VALUES (?, ?, ?, ?)',
         [String(username || '').slice(0, 50), userId ?? null, ip, success ? 1 : 0]
       );
     } catch {
@@ -85,7 +87,7 @@ export function buildApp(pool, opts = {}) {
     }
   }
 
-  app.post('/api/contract/auth/login', async (req, res, next) => {
+  router.post('/auth/login', async (req, res, next) => {
     try {
       const ip = req.ip || 'unknown';
       const username = String((req.body || {}).username || '').trim().slice(0, 50);
@@ -119,11 +121,11 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.get('/api/contract/auth/login-logs', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.get('/auth/login-logs', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const [rows] = await pool.query(
         `SELECT l.id, l.username, l.ip, l.success, l.created_at, u.name AS user_name
-         FROM login_logs l LEFT JOIN users u ON u.id = l.user_id
+         FROM contract_login_logs l LEFT JOIN users u ON u.id = l.user_id
          ORDER BY l.id DESC LIMIT 100`
       );
       res.json({ logs: rows });
@@ -132,7 +134,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.post('/api/contract/auth/logout', auth, async (req, res, next) => {
+  router.post('/auth/logout', auth, async (req, res, next) => {
     try {
       await a.destroySession(pool, a.tokenFromReq(req));
       res.json({ ok: true });
@@ -141,11 +143,11 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.get('/api/contract/auth/me', auth, (req, res) => {
+  router.get('/auth/me', auth, (req, res) => {
     res.json({ user: req.user });
   });
 
-  app.post('/api/contract/auth/password', auth, async (req, res, next) => {
+  router.post('/auth/password', auth, async (req, res, next) => {
     try {
       const { old_password, new_password } = req.body || {};
       const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.user.id]);
@@ -164,7 +166,7 @@ export function buildApp(pool, opts = {}) {
   });
 
   // ---------- 用户与业务人员（主管理员/合同管理员可访问） ----------
-  app.get('/api/contract/users', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.get('/users', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const [rows] = await pool.query(
         'SELECT id, name, username, role, status, created_at FROM users ORDER BY id'
@@ -175,7 +177,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.post('/api/contract/users', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.post('/users', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const { name, username, role, password } = req.body || {};
       const n = String(name || '').trim();
@@ -218,7 +220,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.patch('/api/contract/users/:id', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.patch('/users/:id', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '参数不合法' });
@@ -281,7 +283,7 @@ export function buildApp(pool, opts = {}) {
       }
       await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, [...params, id]);
       if (body.status === 'disabled' || clearPassword) {
-        await pool.query('DELETE FROM sessions WHERE user_id = ?', [id]);
+        await pool.query('DELETE FROM contract_sessions WHERE user_id = ?', [id]);
       }
       res.json({ ok: true });
     } catch (e) {
@@ -290,10 +292,10 @@ export function buildApp(pool, opts = {}) {
   });
 
   // ---------- 客户（用工单位） ----------
-  app.get('/api/contract/customers', auth, async (req, res, next) => {
+  router.get('/customers', auth, async (req, res, next) => {
     try {
       const q = String(req.query.q || '').trim();
-      let sql = 'SELECT id, name, contact, phone, address, status, created_at FROM customers';
+      let sql = 'SELECT id, name, contact, phone, address, status, created_at FROM contract_customers';
       const params = [];
       if (q) {
         sql += ' WHERE name LIKE ?';
@@ -301,20 +303,20 @@ export function buildApp(pool, opts = {}) {
       }
       sql += ' ORDER BY name';
       const [rows] = await pool.query(sql, params);
-      res.json({ customers: rows });
+      res.json({ contract_customers: rows });
     } catch (e) {
       next(e);
     }
   });
 
-  app.post('/api/contract/customers', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.post('/customers', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const { errors, values } = u.validateCustomerInput(req.body || {});
       if (errors.length) return res.status(400).json({ error: errors.join('；') });
-      const [dup] = await pool.query('SELECT id FROM customers WHERE name = ?', [values.name]);
+      const [dup] = await pool.query('SELECT id FROM contract_customers WHERE name = ?', [values.name]);
       if (dup.length) return res.status(409).json({ error: '该单位已存在' });
       const [ins] = await pool.query(
-        'INSERT INTO customers (name, contact, phone, address, status) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO contract_customers (name, contact, phone, address, status) VALUES (?, ?, ?, ?, ?)',
         [values.name, values.contact, values.phone, values.address, values.status]
       );
       res.json({ customer: { id: ins.insertId, ...values } });
@@ -323,17 +325,17 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.put('/api/contract/customers/:id', auth, a.requireRole('admin'), async (req, res, next) => {
+  router.put('/customers/:id', auth, a.requireRole('admin'), async (req, res, next) => {
     try {
       const id = Number(req.params.id);
-      const [rows] = await pool.query('SELECT * FROM customers WHERE id = ?', [id]);
+      const [rows] = await pool.query('SELECT * FROM contract_customers WHERE id = ?', [id]);
       if (!rows.length) return res.status(404).json({ error: '客户不存在' });
       const { errors, values } = u.validateCustomerInput(req.body || {});
       if (errors.length) return res.status(400).json({ error: errors.join('；') });
-      const [dup] = await pool.query('SELECT id FROM customers WHERE name = ? AND id != ?', [values.name, id]);
+      const [dup] = await pool.query('SELECT id FROM contract_customers WHERE name = ? AND id != ?', [values.name, id]);
       if (dup.length) return res.status(409).json({ error: '该单位名称已被使用' });
       await pool.query(
-        'UPDATE customers SET name = ?, contact = ?, phone = ?, address = ?, status = ? WHERE id = ?',
+        'UPDATE contract_customers SET name = ?, contact = ?, phone = ?, address = ?, status = ? WHERE id = ?',
         [values.name, values.contact, values.phone, values.address, values.status, id]
       );
       res.json({ ok: true });
@@ -342,12 +344,12 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.delete('/api/contract/customers/:id', auth, a.requireRole('admin'), async (req, res, next) => {
+  router.delete('/customers/:id', auth, a.requireRole('admin'), async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [used] = await pool.query('SELECT id FROM contracts WHERE customer_id = ? AND deleted_at IS NULL LIMIT 1', [id]);
       if (used.length) return res.status(409).json({ error: '该客户下仍有合同，无法删除' });
-      const [rs] = await pool.query('DELETE FROM customers WHERE id = ?', [id]);
+      const [rs] = await pool.query('DELETE FROM contract_customers WHERE id = ?', [id]);
       if (!rs.affectedRows) return res.status(404).json({ error: '客户不存在' });
       res.json({ ok: true });
     } catch (e) {
@@ -359,17 +361,17 @@ export function buildApp(pool, opts = {}) {
   const CONTRACT_SELECT = `
     SELECT c.*, cu.name AS customer_name, uu.name AS owner_name
     FROM contracts c
-    JOIN customers cu ON cu.id = c.customer_id
+    JOIN contract_customers cu ON cu.id = c.customer_id
     LEFT JOIN users uu ON uu.id = c.owner_user_id
   `;
 
-  app.get('/api/contract/contracts', auth, async (req, res, next) => {
+  router.get('/contracts', auth, async (req, res, next) => {
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
       const pageSize = Math.min(100, Math.max(1, Number(req.query.page_size) || 20));
       const { whereSql, params } = buildContractWhere(req.query, req.user.role);
       const [cnt] = await pool.query(
-        `SELECT COUNT(*) AS total FROM contracts c JOIN customers cu ON cu.id = c.customer_id WHERE ${whereSql}`,
+        `SELECT COUNT(*) AS total FROM contracts c JOIN contract_customers cu ON cu.id = c.customer_id WHERE ${whereSql}`,
         params
       );
       const [rows] = await pool.query(
@@ -432,7 +434,7 @@ export function buildApp(pool, opts = {}) {
   }
 
   // ---------- 负责人列表（所有登录用户可查，供筛选） ----------
-  app.get('/api/contract/owners', auth, async (req, res, next) => {
+  router.get('/owners', auth, async (req, res, next) => {
     try {
       const [rows] = await pool.query("SELECT id, name FROM users WHERE status = 'active' ORDER BY id");
       res.json({ owners: rows });
@@ -442,7 +444,7 @@ export function buildApp(pool, opts = {}) {
   });
 
   // ---------- 合同列表导出（管理员/财务） ----------
-  app.get('/api/contract/contracts/export', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.get('/contracts/export', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const { whereSql, params } = buildContractWhere(req.query, req.user.role);
       const [rows] = await pool.query(`${CONTRACT_SELECT} WHERE ${whereSql} ORDER BY c.id DESC`, params);
@@ -502,7 +504,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.get('/api/contract/contracts/stats', auth, async (req, res, next) => {
+  router.get('/contracts/stats', auth, async (req, res, next) => {
     try {
       const [rows] = await pool.query(`
         SELECT type, COUNT(*) AS total,
@@ -549,7 +551,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.get('/api/contract/contracts/:id', auth, async (req, res, next) => {
+  router.get('/contracts/:id', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query(`${CONTRACT_SELECT} WHERE c.id = ?`, [id]);
@@ -562,7 +564,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.post('/api/contract/contracts', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.post('/contracts', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     const conn = await pool.getConnection();
     try {
       const { errors, values } = u.validateContractInput(req.body || {});
@@ -612,7 +614,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.put('/api/contract/contracts/:id', auth, async (req, res, next) => {
+  router.put('/contracts/:id', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query('SELECT * FROM contracts WHERE id = ?', [id]);
@@ -649,7 +651,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.patch('/api/contract/contracts/:id/status', auth, async (req, res, next) => {
+  router.patch('/contracts/:id/status', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query('SELECT * FROM contracts WHERE id = ?', [id]);
@@ -715,7 +717,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.delete('/api/contract/contracts/:id', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
+  router.delete('/contracts/:id', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query('SELECT * FROM contracts WHERE id = ?', [id]);
@@ -729,7 +731,7 @@ export function buildApp(pool, opts = {}) {
   });
 
   // ---------- 附件 ----------
-  app.get('/api/contract/contracts/:id/files', auth, async (req, res, next) => {
+  router.get('/contracts/:id/files', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query(
@@ -744,7 +746,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.post('/api/contract/contracts/:id/files', auth, (req, res, next) => {
+  router.post('/contracts/:id/files', auth, (req, res, next) => {
     upload.single('file')(req, res, (err) => {
       if (err) {
         return res.status(400).json({ error: '上传失败：文件超过 10MB 或格式不支持' });
@@ -762,6 +764,7 @@ export function buildApp(pool, opts = {}) {
       if (!ext) return res.status(400).json({ error: '仅支持 PDF / JPG / PNG 文件' });
       const original = fixName(req.file.originalname);
       const stored = `${id}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+      await fsp.mkdir(FILES_DIR, { recursive: true }).catch(() => {});
       await fsp.writeFile(path.join(FILES_DIR, stored), req.file.buffer);
       const [ins] = await pool.query(
         'INSERT INTO contract_files (contract_id, original_name, stored_name, size, sha256, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)',
@@ -774,7 +777,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.get('/api/contract/files/:id/download', auth, async (req, res, next) => {
+  router.get('/files/:id/download', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query(
@@ -799,7 +802,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.delete('/api/contract/files/:id', auth, async (req, res, next) => {
+  router.delete('/files/:id', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query(
@@ -823,7 +826,7 @@ export function buildApp(pool, opts = {}) {
   });
 
   // ---------- 操作日志 ----------
-  app.get('/api/contract/contracts/:id/logs', auth, async (req, res, next) => {
+  router.get('/contracts/:id/logs', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [exists] = await pool.query('SELECT id FROM contracts WHERE id = ?', [id]);
@@ -840,12 +843,8 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  // ---------- 兜底 ----------
-  app.use('/api/contract', (_req, res) => {
-    res.status(404).json({ error: '接口不存在' });
-  });
-
-  app.use((err, _req, res, _next) => {
+  // ---------- 错误兜底（路由级） ----------
+  router.use((err, _req, res, _next) => {
     if (err && (err.code === 'LIMIT_FILE_SIZE' || err.name === 'MulterError')) {
       return res.status(400).json({ error: '上传失败：文件超过 10MB 或格式不支持' });
     }
@@ -853,5 +852,5 @@ export function buildApp(pool, opts = {}) {
     res.status(500).json({ error: '服务器内部错误' });
   });
 
-  return app;
+  return router;
 }

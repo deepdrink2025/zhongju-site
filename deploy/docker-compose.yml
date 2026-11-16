@@ -20,7 +20,11 @@ services:
       LOGIN_LIMIT: ${LOGIN_LIMIT:-10}
       TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
       QUOTA_TIME_ZONE: ${QUOTA_TIME_ZONE:-Asia/Shanghai}
+      FILES_DIR: /data/files
       PORT: "8787"
+    volumes:
+      # 合同附件存储卷
+      - contract-files:/data/files
     networks:
       - internal
       - shared
@@ -58,3 +62,6 @@ networks:
     external: true
     # 改成你服务器上公共 MySQL 所在的桥接网络名（docker network ls 查看）
     name: ${SHARED_NETWORK:-bridge-network}
+
+volumes:
+  contract-files:

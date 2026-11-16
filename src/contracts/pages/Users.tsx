@@ -3,7 +3,7 @@ import { api } from '../api';
 import Modal from '../components/Modal';
 import { ROLE_LABELS, LOGIN_ROLES } from '../types';
 import type { LoginLogRow, Role, UserRow } from '../types';
-import { useAuth } from '../App';
+import { useAuth } from '../ContractsApp';
 
 const ROLES: Role[] = ['admin', 'contract_admin', 'staff'];
 
@@ -170,7 +170,7 @@ export default function UsersPage() {
                 <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium">
                     {u.name}
-                    {u.id === user!.id && <span className="ml-1 text-xs text-brand-600">（我）</span>}
+                    {u.id === user!.id && <span className="ml-1 text-xs text-ct-600">（我）</span>}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{uIsLogin ? u.username : '—'}</td>
                   <td className="px-4 py-3">

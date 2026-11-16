@@ -19,6 +19,14 @@ export default {
         },
         /* Butter 风活力辅助色（用于 chips、统计数字、图标点缀） */
         butter: { DEFAULT: '#FFD84D', 600: '#9A7B00' },
+        /* 合同管理模块专用品牌色（青绿），与官网主色区分 */
+        ct: {
+          50: '#ecf7f4',
+          100: '#d2ebe4',
+          500: '#17997e',
+          600: '#0e7c66',
+          700: '#0b6552',
+        },
         lime: { DEFAULT: '#A3E635', 600: '#4D7C0F' },
         violet: { DEFAULT: '#A78BFA', 600: '#7C3AED' },
         pink: { DEFAULT: '#F472B6', 600: '#DB2777' },

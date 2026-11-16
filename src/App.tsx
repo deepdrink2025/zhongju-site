@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Home from './pages/Home';
 import CardPage from './pages/CardPage';
 import CardConsole from './pages/CardConsole';
+import ContractsApp from './contracts/ContractsApp';
 
 /** 路由切换时滚动到页面顶部（锚点滚动由组件内部处理） */
 function ScrollToTop(): null {
@@ -23,6 +24,8 @@ export default function App() {
         <Route path="/card/:id" element={<CardPage />} />
         {/* 内部控制台：名片生成 + 名片管理（按口令权限显示），不在官网导航展示 */}
         <Route path="/admin" element={<CardConsole />} />
+        {/* 合同管理模块：独立账号体系，路径 /contracts/* */}
+        <Route path="/contracts/*" element={<ContractsApp />} />
         {/* 旧入口兼容：/create 已合并进控制台 */}
         <Route path="/create" element={<Navigate to="/admin" replace />} />
         <Route path="*" element={<Home />} />

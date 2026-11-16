@@ -1,18 +1,8 @@
-import mysql from 'mysql2/promise';
-
-export async function createPool(env = process.env) {
-  return mysql.createPool({
-    host: env.DB_HOST || 'mysql-common',
-    port: Number(env.DB_PORT || 3306),
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: env.DB_NAME,
-    waitForConnections: true,
-    connectionLimit: 10,
-  });
-}
-
-export async function ensureSchema(pool) {
+/**
+ * 合同管理模块建表与迁移（幂等）
+ * 与名片表共存于同一个库（zhongju_cards），表名互不冲突
+ */
+export async function ensureContractSchema(pool) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -27,18 +17,18 @@ export async function ensureSchema(pool) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS sessions (
+    CREATE TABLE IF NOT EXISTS contract_sessions (
       id INT AUTO_INCREMENT PRIMARY KEY,
       token_hash CHAR(64) NOT NULL UNIQUE,
       user_id INT NOT NULL,
       expires_at DATETIME NOT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_sessions_user (user_id),
-      CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      INDEX idx_ct_sessions_user (user_id),
+      CONSTRAINT fk_ct_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS customers (
+    CREATE TABLE IF NOT EXISTS contract_customers (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(200) NOT NULL UNIQUE,
       contact VARCHAR(50) NULL,
@@ -74,11 +64,11 @@ export async function ensureSchema(pool) {
       created_by INT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      INDEX idx_contracts_customer (customer_id),
-      INDEX idx_contracts_owner (owner_user_id),
-      INDEX idx_contracts_end (end_date),
-      CONSTRAINT fk_contracts_customer FOREIGN KEY (customer_id) REFERENCES customers(id),
-      CONSTRAINT fk_contracts_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)
+      INDEX idx_ct_contracts_customer (customer_id),
+      INDEX idx_ct_contracts_owner (owner_user_id),
+      INDEX idx_ct_contracts_end (end_date),
+      CONSTRAINT fk_ct_contracts_customer FOREIGN KEY (customer_id) REFERENCES contract_customers(id),
+      CONSTRAINT fk_ct_contracts_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   await pool.query(`
@@ -91,9 +81,9 @@ export async function ensureSchema(pool) {
       sha256 CHAR(64) NOT NULL,
       uploaded_by INT NOT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_files_contract (contract_id),
-      CONSTRAINT fk_files_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
-      CONSTRAINT fk_files_user FOREIGN KEY (uploaded_by) REFERENCES users(id)
+      INDEX idx_ct_files_contract (contract_id),
+      CONSTRAINT fk_ct_files_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ct_files_user FOREIGN KEY (uploaded_by) REFERENCES users(id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   await pool.query(`
@@ -104,25 +94,26 @@ export async function ensureSchema(pool) {
       action VARCHAR(30) NOT NULL,
       detail TEXT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_logs_contract (contract_id),
-      CONSTRAINT fk_logs_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
-      CONSTRAINT fk_logs_user FOREIGN KEY (user_id) REFERENCES users(id)
+      INDEX idx_ct_logs_contract (contract_id),
+      CONSTRAINT fk_ct_logs_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ct_logs_user FOREIGN KEY (user_id) REFERENCES users(id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS login_logs (
+    CREATE TABLE IF NOT EXISTS contract_login_logs (
       id INT AUTO_INCREMENT PRIMARY KEY,
       username VARCHAR(50) NOT NULL,
       user_id INT NULL,
       ip VARCHAR(64) NOT NULL,
       success TINYINT(1) NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_login_logs_time (created_at)
+      INDEX idx_ct_login_logs_time (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
-  // 存量库迁移：补充 invoice_type / amount_unit 列（幂等）
+  // ---- 幂等迁移 ----
+
+  // 1. 存量合同库补充 invoice_type / amount_unit 列
   const [cols] = await pool.query(
     "SELECT column_name AS col FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'contracts' AND column_name IN ('invoice_type', 'amount_unit')"
   );
@@ -134,12 +125,12 @@ export async function ensureSchema(pool) {
     await pool.query("ALTER TABLE contracts ADD COLUMN invoice_type VARCHAR(20) NULL AFTER amount_unit");
   }
 
-  // 存量库角色迁移（幂等）：财务/只读角色并入新模型
-  // admin=主管理员、contract_admin=合同管理员（均可登录）；staff=业务人员档案（不登录、无密码）
+  // 2. 存量库角色迁移（幂等）：admin=主管理员、contract_admin=合同管理员（均可登录）；
+  //    staff=业务人员档案（不登录、无密码）
   await pool.query("ALTER TABLE users MODIFY role ENUM('admin','finance','staff','viewer','contract_admin') NOT NULL DEFAULT 'staff'");
   await pool.query("UPDATE users SET role = 'contract_admin' WHERE role = 'finance'");
   await pool.query("UPDATE users SET role = 'staff' WHERE role = 'viewer'");
   await pool.query("UPDATE users SET salt = '', password_hash = '' WHERE role = 'staff' AND (password_hash != '' OR salt != '')");
-  await pool.query("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role = 'staff')");
+  await pool.query("DELETE FROM contract_sessions WHERE user_id IN (SELECT id FROM users WHERE role = 'staff')");
   await pool.query("ALTER TABLE users MODIFY role ENUM('admin','contract_admin','staff') NOT NULL DEFAULT 'staff'");
 }

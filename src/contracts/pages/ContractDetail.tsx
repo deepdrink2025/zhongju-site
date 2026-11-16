@@ -12,7 +12,7 @@ import {
   fmtSize,
 } from '../types';
 import type { Contract, FileRow, LogRow } from '../types';
-import { useAuth } from '../App';
+import { useAuth } from '../ContractsApp';
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -284,7 +284,7 @@ export default function ContractDetail() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/" className="btn-plain">
+        <Link to="/contracts" className="btn-plain">
           ← 返回台账
         </Link>
         <h2 className="text-lg font-bold">

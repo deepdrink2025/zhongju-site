@@ -77,16 +77,16 @@ export async function doLogin(pool, username, password) {
 export async function createSession(pool, userId) {
   const token = crypto.randomBytes(32).toString('hex');
   await pool.query(
-    'INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))',
+    'INSERT INTO contract_sessions (token_hash, user_id, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))',
     [sha256(token), userId, TOKEN_EXPIRE_HOURS]
   );
-  await pool.query('DELETE FROM sessions WHERE expires_at < NOW()');
+  await pool.query('DELETE FROM contract_sessions WHERE expires_at < NOW()');
   return token;
 }
 
 export async function destroySession(pool, token) {
   if (!token) return;
-  await pool.query('DELETE FROM sessions WHERE token_hash = ?', [sha256(token)]);
+  await pool.query('DELETE FROM contract_sessions WHERE token_hash = ?', [sha256(token)]);
 }
 
 export function tokenFromReq(req) {
@@ -102,7 +102,7 @@ export function authRequired(pool) {
       const token = tokenFromReq(req);
       if (!token) return res.status(401).json({ error: '未登录' });
       const [rows] = await pool.query(
-        'SELECT s.id AS session_id, s.expires_at, u.id AS user_id, u.name, u.username, u.role, u.status FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? LIMIT 1',
+        'SELECT s.id AS session_id, s.expires_at, u.id AS user_id, u.name, u.username, u.role, u.status FROM contract_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? LIMIT 1',
         [sha256(token)]
       );
       const row = rows[0];

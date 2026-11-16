@@ -5,7 +5,7 @@ import Modal from '../components/Modal';
 import ContractForm from '../components/ContractForm';
 import { CONTRACT_TYPES, STATUS_COLORS, fmtDate, fmtMoney, canSeeMoney } from '../types';
 import type { CategoryStat, Contract, StatsResponse } from '../types';
-import { useAuth } from '../App';
+import { useAuth } from '../ContractsApp';
 
 function statusOptions(isAdmin: boolean): [string, string][] {
   const opts: [string, string][] = [
@@ -40,7 +40,7 @@ function Dashboard() {
       .catch(() => {});
   }, []);
 
-  const colors = ['bg-brand-600', 'bg-amber-500', 'bg-slate-600'];
+  const colors = ['bg-ct-600', 'bg-amber-500', 'bg-slate-600'];
 
   return (
     <div className="space-y-4">
@@ -243,12 +243,12 @@ export default function ContractsPage() {
             {data.contracts.map((c) => (
               <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-500">
-                  <Link className="hover:text-brand-600" to={`/contracts/${c.id}`}>
+                  <Link className="hover:text-ct-600" to={`/contracts/${c.id}`}>
                     {c.code}
                   </Link>
                 </td>
                 <td className="px-4 py-3">
-                  <Link className="font-medium hover:text-brand-600" to={`/contracts/${c.id}`}>
+                  <Link className="font-medium hover:text-ct-600" to={`/contracts/${c.id}`}>
                     {c.name}
                   </Link>
                 </td>

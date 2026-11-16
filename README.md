@@ -52,6 +52,7 @@ npm install
 | 专属名片（旧版兼容） | `/card#d=xxxx` | 服务端模式拒绝无签名旧链接；请由管理员迁移为正式短链 |
 | 名片控制台 | `/admin` | **内部工具**，需口令；业务员登录后生成名片，管理员额外可管理全部名片（停用/启用/删除/搜索） |
 | 旧入口兼容 | `/create` | 已合并进控制台，访问时自动跳转到 `/admin` |
+| 合同管理系统 | `/contracts` | **内部工具**，独立账号登录；合同台账/统计看板/附件/回收站，详见「八、合同管理模块」 |
 
 **本地模式**下 `/admin` 无需口令（仅本机数据）；**服务端模式**下口令在服务端 `.env` 中配置（`STAFF_TOKEN` 业务员 / `ADMIN_TOKEN` 管理员），登录后 12 小时内免输。
 
@@ -106,13 +107,14 @@ zhongju-site/
 │   ├── bootstrap.py      # 首次建库与随机口令初始化
 │   ├── verify-deployment.py # 真实数据库与页面验证，自动清理测试名片
 │   └── server-notes.example.md # 运维记录模板，真实配置保存在忽略的本地文件中
-├── server/               # 名片服务端（Node.js + MySQL）
-│   ├── src/app.js        # API 路由（可注入假库，便于测试）
-│   ├── src/db.js         # MySQL 连接池 + 建表（连接 mysql-common 容器）
+├── server/               # 服务端（名片 API + 合同管理 API，Node.js + MySQL，同一进程同一库）
+│   ├── src/app.js        # 名片 API 路由 + 挂载合同模块（可注入假库，便于测试）
+│   ├── src/contracts/    # 合同管理模块（router.js 接口 / schema.js 建表 / auth.js / util.js）
+│   ├── src/db.js         # MySQL 连接池 + 建表（名片表 + 合同表，连接 mysql-common 容器）
 │   ├── src/index.js      # 启动入口
 │   ├── sql/init.sql      # 手动建库脚本（一键脚本已自动完成，排错用）
 │   ├── Dockerfile / docker-compose.yml   # 只单独跑后端时使用
-│   └── test/             # 冒烟测试（内存假库）+ 本地联调服务器
+│   └── test/             # 冒烟测试（内存假库）+ 合同模块单测 + 本地联调服务器
 ├── src/
 │   ├── config.ts         # 服务端模式开关、API 地址
 │   ├── data/
@@ -125,6 +127,7 @@ zhongju-site/
 │   ├── components/       # 官网区块组件 + TabBar + 名片面板
 │   │   ├── CardCreatePanel.tsx  # 名片生成表单 + 我的名片
 │   │   └── AdminCardList.tsx    # 管理员列表（搜索/停用/删除）
+│   ├── contracts/        # 合同管理模块前端（页面/组件/登录态，路由 /contracts/*）
 │   ├── utils/
 │   │   ├── cardCodec.ts  # 名片数据 ↔ 链接 编解码（旧版兼容）
 │   │   ├── cardService.ts# 本地名片存储
@@ -215,7 +218,7 @@ cd zhongju-site/deploy
 
 - 将你的站点域名（如 `example.com` 和 `www.example.com`）解析到目标服务器的公网地址
 - 在 NPM 中将这些域名配置到同一条 Proxy Host：Scheme 为 `http`，Forward Hostname 为 `zhongju-site-web`，Forward Port 为 `80`
-- Advanced 配置为 `client_max_body_size 4m;`，以支持名片头像请求
+- Advanced 配置为 `client_max_body_size 12m;`，以支持名片头像与合同附件上传（附件单文件 ≤10MB）
 - 证书、HTTPS 跳转和续期由用户在 NPM 面板中管理
 
 ### 部署验证
@@ -305,6 +308,31 @@ node test/dev-server.mjs 8787           # 内存假库 API，配合前端联调
 | GET | /api/quota | staff/admin | 查询权威配额与重置时间 |
 | GET | /api/health | 公开 | 健康检查 |
 
+
+## 八、合同管理模块（/contracts）
+
+公司内部业务合同台账，作为本项目的内置模块：**共用同一个 Express 进程（`/api/contract/*`）、同一个 MySQL 库（zhongju_cards）、同一套前端构建**，但拥有独立的账号体系与登录页（`/contracts/login`），与名片口令体系互不影响。
+
+- **角色**：主管理员 / 合同管理员（可登录，均有合同全部操作 + 金额 + 导出权限，登录账号管理仅主管理员）；业务人员为不登录档案，仅作合同负责人选项
+- **数据表**：`users`、`contract_sessions`、`contract_customers`、`contracts`、`contract_files`、`contract_logs`、`contract_login_logs`（服务端启动时自动建表）
+- **附件**：Docker volume `contract-files`（api 容器 `/data/files`），单文件 ≤10MB，仅 PDF/JPG/PNG
+- **功能**：合同台账（搜索/类型/状态/负责人筛选、导出 Excel）、统计看板（在履行/本月新签/30天内到期/已到期 + 三大类分类）、附件在线预览（PDF/图片）与下载、回收站（删除合同仅管理员可见、可恢复）、操作日志、登录日志与账号锁定
+
+**首次初始化合同管理员**（部署后在服务器执行一次）：
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.yml exec api \
+  node --input-type=module -e "
+import { pool } from './src/db.js';
+import { hashPassword } from './src/contracts/util.js';
+const { salt, hash } = hashPassword('你的管理员密码8位以上');
+await pool.query(\"INSERT INTO users (name, username, role, salt, password_hash) VALUES ('主管理员','admin','admin',?,?) ON DUPLICATE KEY UPDATE salt=VALUES(salt), password_hash=VALUES(password_hash), status='active'\", [salt, hash]);
+console.log('合同管理员创建完成');
+process.exit(0);
+"
+```
+
+之后用 `admin` / 该密码登录 `网址/contracts`，在「用户与业务人员」里创建合同管理员和业务人员。
 
 ## 安全修复与升级
 

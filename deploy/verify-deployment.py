@@ -41,8 +41,11 @@ for path in re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html):
     assert status == 200 and 'immutable' in headers.get('Cache-Control', ''), path
 print('PASS built assets and cache headers')
 assert request('/api/health')[1]['ok']
+assert request('/api/contract/health')[1]['ok']
 assert request('/api/cards')[0] == 401
 assert request('/api/admin/login', 'POST', {'passcode': 'invalid-deployment-test'})[0] == 401
+assert request('/api/contract/contracts')[0] == 401
+assert request('/api/contract/auth/login', 'POST', {'username': 'deployment-test', 'password': 'wrong'})[0] == 401
 
 tokens = {}
 for role, key in [('staff', 'STAFF_TOKEN'), ('admin', 'ADMIN_TOKEN')]:
@@ -51,7 +54,12 @@ for role, key in [('staff', 'STAFF_TOKEN'), ('admin', 'ADMIN_TOKEN')]:
     tokens[role] = result['token']
     assert request('/api/admin/me', token=tokens[role])[1]['role'] == role
 assert request('/api/cards', token=tokens['staff'])[0] == 403
-print('PASS database health, both login roles, and authorization')
+print('PASS database health (cards + contracts), both login roles, and authorization')
+
+# 合同管理模块：页面路由与登录页
+status, html, _ = request('/contracts')
+assert status == 200 and '<div id="root"></div>' in html
+print('PASS /contracts SPA route fallback')
 
 code = None
 try:

@@ -9,6 +9,10 @@ import ContractsPage from './pages/Contracts';
 import ContractDetail from './pages/ContractDetail';
 import UsersPage from './pages/Users';
 
+/**
+ * 合同管理模块：独立账号体系（与官网名片口令登录互不相干），
+ * 挂载在主站路由 /contracts/* 下。
+ */
 const AuthCtx = createContext<{ user: AuthUser | null; setUser: (u: AuthUser | null) => void }>({
   user: null,
   setUser: () => {},
@@ -17,7 +21,7 @@ const AuthCtx = createContext<{ user: AuthUser | null; setUser: (u: AuthUser | n
 // eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthCtx);
 
-export default function App() {
+export default function ContractsApp() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(!!getToken());
 
@@ -30,7 +34,7 @@ export default function App() {
   }, []);
 
   if (loading) {
-    return <div className="grid min-h-screen place-items-center text-slate-500">加载中…</div>;
+    return <div className="grid min-h-screen place-items-center bg-slate-100 text-slate-500">加载中…</div>;
   }
 
   return (
@@ -38,15 +42,18 @@ export default function App() {
       {!user ? (
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="*" element={<Navigate to="/login" replace />} />
+          <Route path="*" element={<Navigate to="/contracts/login" replace />} />
         </Routes>
       ) : (
         <Layout>
           <Routes>
             <Route path="/" element={<ContractsPage />} />
-            <Route path="/contracts/:id" element={<ContractDetail />} />
-            <Route path="/users" element={LOGIN_ROLES.includes(user.role) ? <UsersPage /> : <Navigate to="/" replace />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="/:id" element={<ContractDetail />} />
+            <Route
+              path="/users"
+              element={LOGIN_ROLES.includes(user.role) ? <UsersPage /> : <Navigate to="/contracts" replace />}
+            />
+            <Route path="*" element={<Navigate to="/contracts" replace />} />
           </Routes>
         </Layout>
       )}

@@ -8,7 +8,7 @@ import {
   validateContractInput,
   validateCustomerInput,
   CONTRACT_TYPES,
-} from '../src/util.js';
+} from '../src/contracts/util.js';
 
 test('密码哈希与校验', () => {
   const { salt, hash } = hashPassword('s3cretPass!');
