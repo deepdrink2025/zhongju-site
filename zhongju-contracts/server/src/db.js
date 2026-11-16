@@ -18,7 +18,7 @@ export async function ensureSchema(pool) {
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(50) NOT NULL,
       username VARCHAR(50) NOT NULL UNIQUE,
-      role ENUM('admin','finance','staff','viewer') NOT NULL DEFAULT 'staff',
+      role ENUM('admin','contract_admin','staff') NOT NULL DEFAULT 'staff',
       salt CHAR(32) NOT NULL,
       password_hash CHAR(64) NOT NULL,
       status ENUM('active','disabled') NOT NULL DEFAULT 'active',
@@ -133,4 +133,13 @@ export async function ensureSchema(pool) {
   if (!existing.has('invoice_type')) {
     await pool.query("ALTER TABLE contracts ADD COLUMN invoice_type VARCHAR(20) NULL AFTER amount_unit");
   }
+
+  // 存量库角色迁移（幂等）：财务/只读角色并入新模型
+  // admin=主管理员、contract_admin=合同管理员（均可登录）；staff=业务人员档案（不登录、无密码）
+  await pool.query("ALTER TABLE users MODIFY role ENUM('admin','finance','staff','viewer','contract_admin') NOT NULL DEFAULT 'staff'");
+  await pool.query("UPDATE users SET role = 'contract_admin' WHERE role = 'finance'");
+  await pool.query("UPDATE users SET role = 'staff' WHERE role = 'viewer'");
+  await pool.query("UPDATE users SET salt = '', password_hash = '' WHERE role = 'staff' AND (password_hash != '' OR salt != '')");
+  await pool.query("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role = 'staff')");
+  await pool.query("ALTER TABLE users MODIFY role ENUM('admin','contract_admin','staff') NOT NULL DEFAULT 'staff'");
 }

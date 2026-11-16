@@ -1,4 +1,6 @@
-export type Role = 'admin' | 'finance' | 'staff' | 'viewer';
+export type Role = 'admin' | 'contract_admin' | 'staff';
+
+export const LOGIN_ROLES: Role[] = ['admin', 'contract_admin'];
 
 export interface AuthUser {
   id: number;
@@ -115,27 +117,15 @@ export interface StatsOverview {
   expired: number;
 }
 
-export interface DimStat {
-  dim: string;
-  total: number;
-  active: number;
-  amount_sum?: number;
-  amount_other?: number;
-}
-
 export interface StatsResponse {
   categories: CategoryStat[];
   overview: StatsOverview;
-  by_customer: DimStat[];
-  by_entity: DimStat[];
-  by_owner: DimStat[];
 }
 
 export const ROLE_LABELS: Record<Role, string> = {
-  admin: '管理员',
-  finance: '财务',
-  staff: '业务员',
-  viewer: '只读',
+  admin: '主管理员',
+  contract_admin: '合同管理员',
+  staff: '业务人员（不登录）',
 };
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -151,7 +141,7 @@ export const ACTION_LABELS: Record<string, string> = {
 };
 
 export function canSeeMoney(role: Role) {
-  return role === 'admin' || role === 'finance';
+  return role === 'admin' || role === 'contract_admin';
 }
 
 export function fmtMoney(n: number | null | undefined) {

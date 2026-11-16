@@ -171,8 +171,9 @@ export default function ContractDetail() {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<{ url: string; name: string; kind: 'pdf' | 'img' } | null>(null);
 
-  const isAdmin = user!.role === 'admin';
-  const canEdit = isAdmin || (user!.role === 'staff' && contract?.owner_user_id === user!.id);
+  // 管理级角色：主管理员 / 合同管理员，可执行全部合同操作
+  const isAdmin = user!.role === 'admin' || user!.role === 'contract_admin';
+  const canEdit = isAdmin;
   // 生效中 / 已续签的合同都可编辑、终止；已终止的合同只保留删除/查看
   const isActiveLike = contract?.status === 'active' || contract?.status === 'renewed';
 

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { sha256, verifyPassword, TOKEN_EXPIRE_HOURS } from './util.js';
+import { sha256, verifyPassword, TOKEN_EXPIRE_HOURS, LOGIN_ROLES } from './util.js';
 
 const WINDOW = 10 * 60 * 1000;
 const MAX_FAILS = Number(process.env.LOGIN_LIMIT || 10);
@@ -69,6 +69,7 @@ export async function doLogin(pool, username, password) {
   const ok =
     user &&
     user.status === 'active' &&
+    LOGIN_ROLES.includes(user.role) && // 业务人员档案不参与登录
     verifyPassword(password, user.salt, user.password_hash);
   return ok ? user : null;
 }

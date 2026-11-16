@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(50) NOT NULL,
   username VARCHAR(50) NOT NULL UNIQUE,
-  role ENUM('admin','finance','staff','viewer') NOT NULL DEFAULT 'staff',
+  role ENUM('admin','contract_admin','staff') NOT NULL DEFAULT 'staff',
   salt CHAR(32) NOT NULL,
   password_hash CHAR(64) NOT NULL,
   status ENUM('active','disabled') NOT NULL DEFAULT 'active',

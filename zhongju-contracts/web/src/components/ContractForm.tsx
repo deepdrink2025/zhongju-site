@@ -4,6 +4,7 @@ import Combobox from './Combobox';
 import { CONTRACT_TYPES, INVOICE_TYPES, AMOUNT_UNITS, OUR_ENTITIES, RENEWAL_TYPES, SETTLE_TYPES, canSeeMoney, fmtSize } from '../types';
 import type { Contract, Customer, UserRow } from '../types';
 import { useAuth } from '../App';
+import { LOGIN_ROLES } from '../types';
 
 type FormState = Record<string, string>;
 
@@ -42,6 +43,7 @@ export default function ContractForm({
   const { user } = useAuth();
   const role = user!.role;
   const showMoney = canSeeMoney(role);
+  const canManage = LOGIN_ROLES.includes(role);
   const [form, setForm] = useState<FormState>(() => toForm(initial));
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -51,12 +53,12 @@ export default function ContractForm({
 
   useEffect(() => {
     api<{ customers: Customer[] }>('/customers').then((d) => setCustomers(d.customers));
-    if (role === 'admin') {
+    if (canManage) {
       api<{ users: UserRow[] }>('/users').then((d) =>
         setUsers(d.users.filter((u) => u.status === 'active'))
       );
     }
-  }, [role]);
+  }, [canManage]);
 
   function set(key: string, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -67,7 +69,7 @@ export default function ContractForm({
     const missing: string[] = [];
     if (!form.name.trim()) missing.push('合同名称');
     if (!form.customer_name.trim()) missing.push('对方单位');
-    if (role === 'admin' && !form.owner_user_id) missing.push('业务负责人');
+    if (canManage && !form.owner_user_id) missing.push('业务负责人');
     if (!form.sign_date) missing.push('签订日期');
     if (!form.start_date) missing.push('生效日期');
     if (!form.end_date) missing.push('到期日期');
@@ -89,7 +91,7 @@ export default function ContractForm({
         type: form.type,
         our_entity: form.our_entity || null,
         customer_name: form.customer_name,
-        owner_user_id: role === 'staff' ? undefined : Number(form.owner_user_id) || null,
+        owner_user_id: canManage ? Number(form.owner_user_id) || null : null,
         amount: showMoney && form.amount !== '' ? form.amount : null,
         amount_unit: showMoney ? form.amount_unit || null : null,
         invoice_type: form.invoice_type,
@@ -176,7 +178,7 @@ export default function ContractForm({
             onChange={(v) => set('our_entity', v)}
           />
         </div>
-        {role === 'admin' && (
+        {canManage && (
           <div>
             <label className="label">业务负责人 *</label>
             <Combobox

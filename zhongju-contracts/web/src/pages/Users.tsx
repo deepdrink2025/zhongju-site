@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import Modal from '../components/Modal';
-import { ROLE_LABELS } from '../types';
+import { ROLE_LABELS, LOGIN_ROLES } from '../types';
 import type { LoginLogRow, Role, UserRow } from '../types';
 import { useAuth } from '../App';
 
-const ROLES: Role[] = ['admin', 'finance', 'staff', 'viewer'];
+const ROLES: Role[] = ['admin', 'contract_admin', 'staff'];
 
 function LoginLogsModal({ onClose }: { onClose: () => void }) {
   const [logs, setLogs] = useState<LoginLogRow[]>([]);
@@ -57,6 +57,7 @@ function LoginLogsModal({ onClose }: { onClose: () => void }) {
 
 export default function UsersPage() {
   const { user } = useAuth();
+  const isMainAdmin = user!.role === 'admin';
   const [list, setList] = useState<UserRow[]>([]);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
@@ -81,7 +82,15 @@ export default function UsersPage() {
   async function create() {
     setBusy(true);
     try {
-      await api('/users', { method: 'POST', body: JSON.stringify(form) });
+      const isStaff = form.role === 'staff';
+      await api('/users', {
+        method: 'POST',
+        body: JSON.stringify(
+          isStaff
+            ? { name: form.name, role: 'staff' }
+            : { name: form.name, username: form.username, role: form.role, password: form.password }
+        ),
+      });
       setCreating(false);
       setForm({ name: '', username: '', role: 'staff', password: '' });
       fetchList();
@@ -102,6 +111,17 @@ export default function UsersPage() {
     }
   }
 
+  async function changeRole(u: UserRow, newRole: Role) {
+    if (u.role === 'staff' && LOGIN_ROLES.includes(newRole)) {
+      // 业务人员转登录账号需要设置初始密码
+      const pw = window.prompt(`将「${u.name}」设为${ROLE_LABELS[newRole]}，请设置初始密码（至少 8 位）：`);
+      if (!pw) return;
+      await patch(u.id, { role: newRole, password: pw });
+    } else {
+      await patch(u.id, { role: newRole });
+    }
+  }
+
   async function resetPw(u: UserRow) {
     const pw = window.prompt(`为「${u.name}」设置新密码（至少 8 位）：`);
     if (!pw) return;
@@ -109,17 +129,22 @@ export default function UsersPage() {
     alert('密码已重置');
   }
 
+  const staffCount = list.filter((u) => u.role === 'staff').length;
+  const accountCount = list.length - staffCount;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center">
         <p className="text-sm text-slate-500">
-          共 {list.length} 个账号。同一账号连续登录失败 {5} 次将被锁定 30 分钟。
+          共 {accountCount} 个登录账号、{staffCount} 名业务人员（业务人员仅作为合同负责人档案，不登录）。
         </p>
-        <button className="btn-plain ml-auto" onClick={() => setShowLoginLogs(true)}>
-          登录日志
-        </button>
+        {isMainAdmin && (
+          <button className="btn-plain ml-auto" onClick={() => setShowLoginLogs(true)}>
+            登录日志
+          </button>
+        )}
         <button className="btn-primary ml-2" onClick={() => setCreating(true)}>
-          ＋ 新增账号
+          ＋ 新增人员 / 账号
         </button>
       </div>
 
@@ -138,54 +163,62 @@ export default function UsersPage() {
             </tr>
           </thead>
           <tbody>
-            {list.map((u) => (
-              <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-3 font-medium">
-                  {u.name}
-                  {u.id === user!.id && <span className="ml-1 text-xs text-brand-600">（我）</span>}
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-slate-500">{u.username}</td>
-                <td className="px-4 py-3">
-                  <select
-                    className="select w-auto min-w-[6rem] px-2 py-1 text-xs"
-                    value={u.role}
-                    disabled={u.id === user!.id}
-                    onChange={(e) => patch(u.id, { role: e.target.value })}
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {ROLE_LABELS[r]}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`badge ${u.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
-                    {u.status === 'active' ? '启用' : '停用'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-xs text-slate-400">{u.created_at?.slice(0, 10)}</td>
-                <td className="px-4 py-3 text-right">
-                  <button className="btn-plain" onClick={() => resetPw(u)}>
-                    重置密码
-                  </button>
-                  {u.id !== user!.id && (
-                    <button
-                      className="btn-plain ml-2"
-                      onClick={() =>
-                        patch(
-                          u.id,
-                          { status: u.status === 'active' ? 'disabled' : 'active' },
-                          u.status === 'active' ? `确认停用「${u.name}」的账号？` : `确认启用「${u.name}」的账号？`
-                        )
-                      }
+            {list.map((u) => {
+              const uIsLogin = LOGIN_ROLES.includes(u.role);
+              const roleEditable = isMainAdmin && u.id !== user!.id;
+              return (
+                <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="px-4 py-3 font-medium">
+                    {u.name}
+                    {u.id === user!.id && <span className="ml-1 text-xs text-brand-600">（我）</span>}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-500">{uIsLogin ? u.username : '—'}</td>
+                  <td className="px-4 py-3">
+                    <select
+                      className="select w-auto min-w-[6rem] px-2 py-1 text-xs"
+                      value={u.role}
+                      disabled={!roleEditable}
+                      onChange={(e) => changeRole(u, e.target.value as Role)}
                     >
-                      {u.status === 'active' ? '停用' : '启用'}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {ROLE_LABELS[r]}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`badge ${u.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                      {u.status === 'active' ? '启用' : '停用'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-400">{u.created_at?.slice(0, 10)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {uIsLogin && isMainAdmin && (
+                      <button className="btn-plain" onClick={() => resetPw(u)}>
+                        重置密码
+                      </button>
+                    )}
+                    {u.id !== user!.id && (
+                      <button
+                        className="btn-plain ml-2"
+                        onClick={() =>
+                          patch(
+                            u.id,
+                            { status: u.status === 'active' ? 'disabled' : 'active' },
+                            u.status === 'active'
+                              ? `确认停用「${u.name}」？${uIsLogin ? '该账号将无法登录。' : '停用后不能再作为新合同的负责人选择。'}`
+                              : `确认启用「${u.name}」？`
+                          )
+                        }
+                      >
+                        {u.status === 'active' ? '停用' : '启用'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -193,39 +226,54 @@ export default function UsersPage() {
       {showLoginLogs && <LoginLogsModal onClose={() => setShowLoginLogs(false)} />}
 
       {creating && (
-        <Modal title="新增账号" onClose={() => setCreating(false)}>
+        <Modal title={form.role === 'staff' ? '新增业务人员' : '新增登录账号'} onClose={() => setCreating(false)}>
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">姓名 *</label>
-                <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-              </div>
-              <div>
-                <label className="label">登录名 *（3-30 位字母/数字/下划线）</label>
-                <input className="input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
-              </div>
+            <div>
+              <label className="label">角色</label>
+              <select
+                className="select"
+                value={form.role}
+                onChange={(e) => setForm({ ...form, role: e.target.value as Role })}
+              >
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+              {form.role === 'staff' && (
+                <p className="mt-1 text-xs text-slate-400">业务人员不登录系统，仅用于新建合同时选择负责人。</p>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">角色</label>
-                <select className="select" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
-                  {ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {ROLE_LABELS[r]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="label">初始密码 *（至少 8 位）</label>
-                <input className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
-              </div>
+            <div>
+              <label className="label">姓名 *</label>
+              <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
+            {form.role !== 'staff' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">登录名 *（3-30 位字母/数字/中划线/下划线）</label>
+                  <input className="input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">初始密码 *（至少 8 位）</label>
+                  <input className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                </div>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button className="btn-plain" onClick={() => setCreating(false)}>
                 取消
               </button>
-              <button className="btn-primary" disabled={busy || !form.name || !form.username || form.password.length < 8} onClick={create}>
+              <button
+                className="btn-primary"
+                disabled={
+                  busy ||
+                  !form.name ||
+                  (form.role !== 'staff' && (!/^[a-zA-Z0-9_-]{3,30}$/.test(form.username) || form.password.length < 8))
+                }
+                onClick={create}
+              >
                 创建
               </button>
             </div>

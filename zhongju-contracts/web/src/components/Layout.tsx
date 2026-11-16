@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { ROLE_LABELS } from '../types';
+import { ROLE_LABELS, LOGIN_ROLES } from '../types';
 import { useAuth } from '../App';
 import Modal from './Modal';
 
@@ -87,7 +87,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           </Link>
           <nav className="flex items-center gap-1">
             {link('/', '合同台账')}
-            {user.role === 'admin' && link('/users', '用户管理')}
+            {LOGIN_ROLES.includes(user.role) && link('/users', '用户与业务人员')}
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
             <span className="text-slate-500">

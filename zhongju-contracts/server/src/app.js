@@ -44,7 +44,8 @@ export function buildApp(pool, opts = {}) {
   }
 
   function canEditContract(user, row) {
-    return user.role === 'admin' || (user.role === 'staff' && row.owner_user_id === user.id);
+    // 主管理员 / 合同管理员均可编辑全部合同（业务人员不登录，只是负责人标签）
+    return user.role === 'admin' || user.role === 'contract_admin';
   }
 
   async function nextCode(conn, year) {
@@ -118,7 +119,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.get('/api/contract/auth/login-logs', auth, a.requireRole('admin'), async (req, res, next) => {
+  app.get('/api/contract/auth/login-logs', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const [rows] = await pool.query(
         `SELECT l.id, l.username, l.ip, l.success, l.created_at, u.name AS user_name
@@ -162,8 +163,8 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  // ---------- 用户管理（仅管理员） ----------
-  app.get('/api/contract/users', auth, a.requireRole('admin'), async (req, res, next) => {
+  // ---------- 用户与业务人员（主管理员/合同管理员可访问） ----------
+  app.get('/api/contract/users', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const [rows] = await pool.query(
         'SELECT id, name, username, role, status, created_at FROM users ORDER BY id'
@@ -174,24 +175,41 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.post('/api/contract/users', auth, a.requireRole('admin'), async (req, res, next) => {
+  app.post('/api/contract/users', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const { name, username, role, password } = req.body || {};
       const n = String(name || '').trim();
-      const un = String(username || '').trim();
-      const pw = String(password || '');
+      const r = String(role || 'staff');
       if (!n || n.length > 50) return res.status(400).json({ error: '姓名必填且不超过 50 字' });
-      if (!/^[a-zA-Z0-9_]{3,30}$/.test(un)) {
-        return res.status(400).json({ error: '登录名需为 3-30 位字母、数字或下划线' });
+      if (!u.ROLES.includes(r)) return res.status(400).json({ error: '角色不合法' });
+
+      // 登录账号（主/合同管理员）只能由主管理员创建；业务人员为档案，不登录、无密码
+      const isStaff = r === 'staff';
+      if (!isStaff && req.user.role !== 'admin') {
+        return res.status(403).json({ error: '只有主管理员可以创建登录账号' });
       }
-      if (!u.ROLES.includes(role)) return res.status(400).json({ error: '角色不合法' });
-      if (pw.length < 8) return res.status(400).json({ error: '初始密码至少 8 位' });
+
+      let un = String(username || '').trim();
+      if (isStaff && !un) {
+        // 业务人员不登录，登录名自动生成唯一占位值
+        un = `p-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
+      }
+      if (!/^[a-zA-Z0-9_-]{3,30}$/.test(un)) {
+        return res.status(400).json({ error: '登录名需为 3-30 位字母、数字、中划线或下划线' });
+      }
       const [dup] = await pool.query('SELECT id FROM users WHERE username = ?', [un]);
       if (dup.length) return res.status(409).json({ error: '登录名已存在' });
-      const { salt, hash } = u.hashPassword(pw);
+
+      let salt = '';
+      let hash = '';
+      if (!isStaff) {
+        const pw = String(password || '');
+        if (pw.length < 8) return res.status(400).json({ error: '初始密码至少 8 位' });
+        ({ salt, hash } = u.hashPassword(pw));
+      }
       const [ins] = await pool.query(
         'INSERT INTO users (name, username, role, salt, password_hash) VALUES (?, ?, ?, ?, ?)',
-        [n, un, role, salt, hash]
+        [n, un, r, salt, hash]
       );
       const [rows] = await pool.query('SELECT id, name, username, role, status, created_at FROM users WHERE id = ?', [ins.insertId]);
       res.json({ user: rows[0] });
@@ -200,30 +218,52 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.patch('/api/contract/users/:id', auth, a.requireRole('admin'), async (req, res, next) => {
+  app.patch('/api/contract/users/:id', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '参数不合法' });
       const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
       if (!rows.length) return res.status(404).json({ error: '用户不存在' });
+      const target = rows[0];
       const body = req.body || {};
-      if (id === req.user.id && (body.status === 'disabled' || (body.role !== undefined && body.role !== 'admin'))) {
+      const isSelf = id === req.user.id;
+      const targetIsLogin = u.LOGIN_ROLES.includes(target.role);
+
+      // 登录账号（主/合同管理员）只能由主管理员维护
+      if (targetIsLogin && req.user.role !== 'admin') {
+        return res.status(403).json({ error: '只有主管理员可以管理登录账号' });
+      }
+      if (isSelf && (body.status === 'disabled' || (body.role !== undefined && body.role !== target.role))) {
         return res.status(400).json({ error: '不能停用自己或修改自己的角色' });
       }
+
       const sets = [];
       const params = [];
+      let clearPassword = false;
       if (body.name !== undefined) {
         const n = String(body.name).trim();
         if (!n || n.length > 50) return res.status(400).json({ error: '姓名不合法' });
         sets.push('name = ?');
         params.push(n);
       }
-      if (body.role !== undefined) {
+      if (body.role !== undefined && body.role !== target.role) {
+        if (req.user.role !== 'admin') return res.status(403).json({ error: '只有主管理员可以调整角色' });
         if (!u.ROLES.includes(body.role)) return res.status(400).json({ error: '角色不合法' });
         sets.push('role = ?');
         params.push(body.role);
+        // 登录角色 → 业务人员：清空密码、踢掉会话；业务人员 → 登录角色：必须同时设置密码
+        if (targetIsLogin && body.role === 'staff') {
+          clearPassword = true;
+        } else if (!targetIsLogin && u.LOGIN_ROLES.includes(body.role)) {
+          const pw = String(body.password || '');
+          if (pw.length < 8) return res.status(400).json({ error: '设置为登录账号需提供至少 8 位的初始密码' });
+          const { salt, hash } = u.hashPassword(pw);
+          sets.push('salt = ?', 'password_hash = ?');
+          params.push(salt, hash);
+        }
       }
       if (body.password !== undefined && body.password !== '') {
+        if (req.user.role !== 'admin') return res.status(403).json({ error: '只有主管理员可以重置密码' });
         if (String(body.password).length < 8) return res.status(400).json({ error: '密码至少 8 位' });
         const { salt, hash } = u.hashPassword(String(body.password));
         sets.push('salt = ?', 'password_hash = ?');
@@ -235,8 +275,12 @@ export function buildApp(pool, opts = {}) {
         params.push(body.status);
       }
       if (!sets.length) return res.status(400).json({ error: '没有需要修改的字段' });
+      if (clearPassword) {
+        sets.push('salt = ?', 'password_hash = ?');
+        params.push('', '');
+      }
       await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, [...params, id]);
-      if (body.status === 'disabled') {
+      if (body.status === 'disabled' || clearPassword) {
         await pool.query('DELETE FROM sessions WHERE user_id = ?', [id]);
       }
       res.json({ ok: true });
@@ -263,7 +307,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.post('/api/contract/customers', auth, a.requireRole('admin', 'staff'), async (req, res, next) => {
+  app.post('/api/contract/customers', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const { errors, values } = u.validateCustomerInput(req.body || {});
       if (errors.length) return res.status(400).json({ error: errors.join('；') });
@@ -398,7 +442,7 @@ export function buildApp(pool, opts = {}) {
   });
 
   // ---------- 合同列表导出（管理员/财务） ----------
-  app.get('/api/contract/contracts/export', auth, a.requireRole('admin', 'finance'), async (req, res, next) => {
+  app.get('/api/contract/contracts/export', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const { whereSql, params } = buildContractWhere(req.query, req.user.role);
       const [rows] = await pool.query(`${CONTRACT_SELECT} WHERE ${whereSql} ORDER BY c.id DESC`, params);
@@ -499,36 +543,7 @@ export function buildApp(pool, opts = {}) {
         expired: Number(ov[0].expired) || 0,
       };
 
-      // 金额口径说明：只有单位为「元」的固定总额可以直接相加；
-      // 元/时/人 等单价类金额需乘以人数与周期才有意义，单独计数不参与求和。
-      const amountExpr = "SUM(CASE WHEN amount IS NOT NULL AND (amount_unit IS NULL OR amount_unit = '元') THEN amount ELSE 0 END)";
-      const otherCntExpr = "SUM(CASE WHEN amount IS NOT NULL AND amount_unit IS NOT NULL AND amount_unit != '元' THEN 1 ELSE 0 END)";
-      const canMoney = u.canSeeMoney(req.user.role);
-      const groupBy = async (expr, joinSql) => {
-        const [rs] = await pool.query(`
-          SELECT ${expr} AS dim, COUNT(*) AS total,
-                 SUM(CASE WHEN c.status IN ('active','renewed') AND c.end_date >= CURDATE() THEN 1 ELSE 0 END) AS active
-                 ${canMoney ? `, ${amountExpr} AS amount_sum, ${otherCntExpr} AS amount_other` : ''}
-          FROM contracts c ${joinSql}
-          WHERE c.deleted_at IS NULL
-          GROUP BY dim ORDER BY total DESC, dim ASC
-        `);
-        return rs.map((r) => ({
-          dim: r.dim == null || r.dim === '' ? '未设置' : r.dim,
-          total: Number(r.total) || 0,
-          active: Number(r.active) || 0,
-          ...(canMoney
-            ? { amount_sum: Number(r.amount_sum) || 0, amount_other: Number(r.amount_other) || 0 }
-            : {}),
-        }));
-      };
-      const [by_customer, by_entity, by_owner] = await Promise.all([
-        groupBy('cu.name', 'JOIN customers cu ON cu.id = c.customer_id'),
-        groupBy('c.our_entity', ''),
-        groupBy('uu.name', 'LEFT JOIN users uu ON uu.id = c.owner_user_id'),
-      ]);
-
-      res.json({ categories, overview, by_customer, by_entity, by_owner });
+      res.json({ categories, overview });
     } catch (e) {
       next(e);
     }
@@ -547,7 +562,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.post('/api/contract/contracts', auth, a.requireRole('admin', 'staff'), async (req, res, next) => {
+  app.post('/api/contract/contracts', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     const conn = await pool.getConnection();
     try {
       const { errors, values } = u.validateContractInput(req.body || {});
@@ -555,7 +570,6 @@ export function buildApp(pool, opts = {}) {
         conn.release();
         return res.status(400).json({ error: errors.join('；') });
       }
-      if (req.user.role === 'staff') values.owner_user_id = req.user.id;
       const [own] = await conn.query("SELECT id FROM users WHERE id = ? AND status = 'active'", [values.owner_user_id]);
       if (!own.length) {
         conn.release();
@@ -607,7 +621,6 @@ export function buildApp(pool, opts = {}) {
       if (!canEditContract(req.user, old)) return res.status(403).json({ error: '只能编辑本人负责的合同' });
       const { errors, values } = u.validateContractInput(req.body || {});
       if (errors.length) return res.status(400).json({ error: errors.join('；') });
-      if (req.user.role === 'staff') values.owner_user_id = old.owner_user_id;
       const [own] = await pool.query("SELECT id FROM users WHERE id = ? AND status = 'active'", [values.owner_user_id]);
       if (!own.length) return res.status(400).json({ error: '业务负责人不存在' });
       values.customer_id = await ensureCustomer(pool, values.customer_name);
@@ -644,7 +657,7 @@ export function buildApp(pool, opts = {}) {
       if (!row) return res.status(404).json({ error: '合同不存在' });
       const action = String((req.body || {}).action || '');
       if (action === 'restore') {
-        if (req.user.role !== 'admin') return res.status(403).json({ error: '只有管理员可以恢复合同' });
+        if (!['admin', 'contract_admin'].includes(req.user.role)) return res.status(403).json({ error: '只有主管理员或合同管理员可以恢复合同' });
         if (!row.deleted_at) return res.status(400).json({ error: '合同未被删除' });
         await pool.query('UPDATE contracts SET deleted_at = NULL WHERE id = ?', [id]);
         await addLog(id, req.user.id, 'restore', null);
@@ -652,9 +665,8 @@ export function buildApp(pool, opts = {}) {
       }
       if (row.deleted_at) return res.status(400).json({ error: '合同已被删除，请先恢复' });
       if (action === 'terminate') {
-        const canTerminate =
-          req.user.role === 'admin' || (req.user.role === 'staff' && row.owner_user_id === req.user.id);
-        if (!canTerminate) return res.status(403).json({ error: '只有管理员或业务负责人可以终止合同' });
+        const canTerminate = req.user.role === 'admin' || req.user.role === 'contract_admin';
+        if (!canTerminate) return res.status(403).json({ error: '只有主管理员或合同管理员可以终止合同' });
         const reason = String((req.body || {}).reason || '').trim().slice(0, 255);
         if (!reason) return res.status(400).json({ error: '请选择终止原因' });
         await pool.query(
@@ -665,7 +677,7 @@ export function buildApp(pool, opts = {}) {
         return res.json({ ok: true });
       }
       if (action === 'renew') {
-        if (req.user.role !== 'admin') return res.status(403).json({ error: '只有管理员可以标记续签' });
+        if (!['admin', 'contract_admin'].includes(req.user.role)) return res.status(403).json({ error: '只有主管理员或合同管理员可以标记续签' });
         const pick = (v) => {
           const s = String(v || '').trim();
           return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
@@ -687,9 +699,8 @@ export function buildApp(pool, opts = {}) {
         return res.json({ ok: true });
       }
       if (action === 'reactivate') {
-        const canReactivate =
-          req.user.role === 'admin' || (req.user.role === 'staff' && row.owner_user_id === req.user.id);
-        if (!canReactivate) return res.status(403).json({ error: '只有管理员或业务负责人可以恢复合作' });
+        const canReactivate = req.user.role === 'admin' || req.user.role === 'contract_admin';
+        if (!canReactivate) return res.status(403).json({ error: '只有主管理员或合同管理员可以恢复合作' });
         if (row.status !== 'terminated') return res.status(400).json({ error: '只有已终止的合同可以恢复合作' });
         await pool.query(
           "UPDATE contracts SET status = 'active', terminate_reason = NULL, terminated_at = NULL WHERE id = ?",
@@ -704,7 +715,7 @@ export function buildApp(pool, opts = {}) {
     }
   });
 
-  app.delete('/api/contract/contracts/:id', auth, a.requireRole('admin'), async (req, res, next) => {
+  app.delete('/api/contract/contracts/:id', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const id = Number(req.params.id);
       const [rows] = await pool.query('SELECT * FROM contracts WHERE id = ?', [id]);

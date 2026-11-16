@@ -21,9 +21,8 @@ test('密码哈希与校验', () => {
 test('金额按角色过滤', () => {
   const row = { id: 1, amount: 12345.5, end_date: '2099-01-01', status: 'active', deleted_at: null };
   assert.equal('amount' in sanitizeContract(row, 'admin'), true);
-  assert.equal('amount' in sanitizeContract(row, 'finance'), true);
+  assert.equal('amount' in sanitizeContract(row, 'contract_admin'), true);
   assert.equal('amount' in sanitizeContract(row, 'staff'), false);
-  assert.equal('amount' in sanitizeContract(row, 'viewer'), false);
 });
 
 test('展示状态计算', () => {

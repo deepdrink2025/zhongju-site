@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { api, getToken, setToken } from './api';
+import { LOGIN_ROLES } from './types';
 import type { AuthUser } from './types';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -44,7 +45,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<ContractsPage />} />
             <Route path="/contracts/:id" element={<ContractDetail />} />
-            <Route path="/users" element={user.role === 'admin' ? <UsersPage /> : <Navigate to="/" replace />} />
+            <Route path="/users" element={LOGIN_ROLES.includes(user.role) ? <UsersPage /> : <Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>

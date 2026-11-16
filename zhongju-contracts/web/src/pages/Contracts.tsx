@@ -4,7 +4,7 @@ import { api, getToken } from '../api';
 import Modal from '../components/Modal';
 import ContractForm from '../components/ContractForm';
 import { CONTRACT_TYPES, STATUS_COLORS, fmtDate, fmtMoney, canSeeMoney } from '../types';
-import type { CategoryStat, Contract, DimStat, StatsResponse } from '../types';
+import type { CategoryStat, Contract, StatsResponse } from '../types';
 import { useAuth } from '../App';
 
 function statusOptions(isAdmin: boolean): [string, string][] {
@@ -27,31 +27,20 @@ const OVERVIEW_ITEMS: { key: keyof StatsResponse['overview']; label: string; ton
   { key: 'expired', label: '已到期', tone: 'text-red-600' },
 ];
 
-const DIM_TABS: { key: 'by_customer' | 'by_entity' | 'by_owner'; label: string }[] = [
-  { key: 'by_customer', label: '按客户' },
-  { key: 'by_entity', label: '按我方签约主体' },
-  { key: 'by_owner', label: '按业务负责人' },
-];
-
-function Dashboard({ showMoney }: { showMoney: boolean }) {
+function Dashboard() {
   const [cats, setCats] = useState<CategoryStat[]>([]);
   const [overview, setOverview] = useState<StatsResponse['overview'] | null>(null);
-  const [dims, setDims] = useState<Pick<StatsResponse, 'by_customer' | 'by_entity' | 'by_owner'> | null>(null);
-  const [dimTab, setDimTab] = useState<'by_customer' | 'by_entity' | 'by_owner'>('by_customer');
 
   useEffect(() => {
     api<StatsResponse>('/contracts/stats')
       .then((d) => {
         setCats(d.categories);
         setOverview(d.overview);
-        setDims({ by_customer: d.by_customer, by_entity: d.by_entity, by_owner: d.by_owner });
       })
       .catch(() => {});
   }, []);
 
   const colors = ['bg-brand-600', 'bg-amber-500', 'bg-slate-600'];
-  const rows: DimStat[] | undefined = dims?.[dimTab];
-  const dimTotal = rows?.reduce((s, r) => s + r.total, 0) ?? 0;
 
   return (
     <div className="space-y-4">
@@ -89,76 +78,13 @@ function Dashboard({ showMoney }: { showMoney: boolean }) {
           </div>
         ))}
       </div>
-
-      {rows && (
-        <div className="card">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            {DIM_TABS.map((t) => (
-              <button
-                key={t.key}
-                className={`rounded-full px-3 py-1 text-sm ${dimTab === t.key ? 'bg-brand-600 font-medium text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                onClick={() => setDimTab(t.key)}
-              >
-                {t.label}
-              </button>
-            ))}
-            <span className="ml-auto text-xs text-slate-400">共 {dimTotal} 份（已删除合同不计入）</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[480px] text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
-                  <th className="py-2 pr-4">{DIM_TABS.find((t) => t.key === dimTab)!.label.replace('按', '')}</th>
-                  <th className="py-2 pr-4 text-right">合同数</th>
-                  <th className="py-2 pr-4 text-right">在履行</th>
-                  {showMoney && (
-                    <th className="py-2 text-right">
-                      金额合计（元）
-                      <span className="ml-1 font-normal text-slate-400">※</span>
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.dim} className="border-b border-slate-100">
-                    <td className="py-2 pr-4 text-slate-700">{r.dim}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{r.total}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums text-emerald-600">{r.active}</td>
-                    {showMoney && (
-                      <td className="py-2 text-right tabular-nums">
-                        {fmtMoney(r.amount_sum ?? 0)}
-                        {r.amount_other ? (
-                          <span className="ml-1 text-xs text-slate-400">+{r.amount_other} 份单价类</span>
-                        ) : null}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-                {!rows.length && (
-                  <tr>
-                    <td colSpan={showMoney ? 4 : 3} className="py-6 text-center text-slate-400">
-                      暂无数据
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {showMoney && (
-            <p className="mt-2 text-xs text-slate-400">
-              ※ 仅统计单位为「元」的固定总额；元/时/人 等单价类金额需乘以人数与周期，不直接相加（以「N 份单价类」提示）。
-            </p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
 export default function ContractsPage() {
   const { user } = useAuth();
-  const canAdd = user!.role === 'admin' || user!.role === 'staff';
+  const canAdd = user!.role === 'admin' || user!.role === 'contract_admin';
   const showMoney = canSeeMoney(user!.role);
 
   const [data, setData] = useState<{ total: number; contracts: Contract[] }>({ total: 0, contracts: [] });
@@ -230,7 +156,7 @@ export default function ContractsPage() {
 
   return (
     <div className="space-y-4">
-      <Dashboard showMoney={showMoney} />
+      <Dashboard />
 
       <div className="flex flex-wrap items-center gap-2">
         <input

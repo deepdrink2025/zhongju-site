@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 
-export const ROLES = ['admin', 'finance', 'staff', 'viewer'];
-export const ROLE_LABELS = { admin: '管理员', finance: '财务', staff: '业务员', viewer: '只读' };
+// 可登录角色：主管理员 / 合同管理员；staff 为业务人员档案（不登录，仅作为合同负责人）
+export const ROLES = ['admin', 'contract_admin', 'staff'];
+export const LOGIN_ROLES = ['admin', 'contract_admin'];
+export const ROLE_LABELS = { admin: '主管理员', contract_admin: '合同管理员', staff: '业务人员（不登录）' };
 export const CONTRACT_TYPES = [
   '劳务派遣',
   '劳务外包',
@@ -50,7 +52,7 @@ export function sha256(data) {
 }
 
 export function canSeeMoney(role) {
-  return role === 'admin' || role === 'finance';
+  return role === 'admin' || role === 'contract_admin';
 }
 
 function daysToExpiry(endDate, now) {
