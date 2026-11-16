@@ -303,7 +303,7 @@ export function createContractRouter(pool, opts = {}) {
       }
       sql += ' ORDER BY name';
       const [rows] = await pool.query(sql, params);
-      res.json({ contract_customers: rows });
+      res.json({ customers: rows });
     } catch (e) {
       next(e);
     }
@@ -443,7 +443,7 @@ export function createContractRouter(pool, opts = {}) {
     }
   });
 
-  // ---------- 合同列表导出（管理员/财务） ----------
+  // ---------- 合同列表导出（主管理员/合同管理员） ----------
   router.get('/contracts/export', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const { whereSql, params } = buildContractWhere(req.query, req.user.role);

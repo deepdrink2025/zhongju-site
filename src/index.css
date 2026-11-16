@@ -103,3 +103,13 @@ section[id] {
     @apply rounded-xl bg-white p-5 shadow-sm;
   }
 }
+
+/*
+ * 合同模块挂载期间（ContractsApp 动态加/删 .ct-body）沿用原独立版底色：
+ * 浅灰底 + 白卡片，才能看出卡片层次。
+ * 必须写在 @layer 之外——官网 body 的白底规则未分层，分层规则压不过它，
+ * 这里靠 body.ct-body 的更高特异性取胜。
+ */
+body.ct-body {
+  @apply bg-slate-100 text-slate-800;
+}

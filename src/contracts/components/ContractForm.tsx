@@ -202,7 +202,7 @@ export default function ContractForm({
             {showMoney && (
           <>
             <div className="sm:col-span-2">
-              <label className="label">合同金额（选填，仅管理员/财务可见）</label>
+              <label className="label">合同金额（选填，仅登录账号可见）</label>
               <div className="flex gap-2">
                 <input
                   className="input w-36 shrink-0"

@@ -69,7 +69,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     <NavLink
       key={to}
       to={to}
-      end={to === '/'}
+      end={to === '/contracts'}
       className={({ isActive }) =>
         `rounded-lg px-3 py-1.5 text-sm font-medium ${isActive ? 'bg-ct-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`
       }
@@ -86,8 +86,8 @@ export default function Layout({ children }: { children: ReactNode }) {
             中聚人力 · 合同管理
           </Link>
           <nav className="flex items-center gap-1">
-            {link('/', '合同台账')}
-            {LOGIN_ROLES.includes(user.role) && link('/users', '用户与业务人员')}
+            {link('/contracts', '合同台账')}
+            {LOGIN_ROLES.includes(user.role) && link('/contracts/users', '用户与业务人员')}
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
             <span className="text-slate-500">

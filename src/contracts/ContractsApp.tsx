@@ -25,6 +25,19 @@ export default function ContractsApp() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(!!getToken());
 
+  // 保持与原独立版一致的观感：17px 基准字号 + 浅灰页面底色。
+  // 只在本模块挂载期间生效，离开（如返回官网）立即还原，不影响官网布局。
+  useEffect(() => {
+    const root = document.documentElement;
+    const prevFontSize = root.style.fontSize;
+    root.style.fontSize = '17px';
+    document.body.classList.add('ct-body');
+    return () => {
+      root.style.fontSize = prevFontSize;
+      document.body.classList.remove('ct-body');
+    };
+  }, []);
+
   useEffect(() => {
     if (!getToken()) return;
     api<{ user: AuthUser }>('/auth/me')
