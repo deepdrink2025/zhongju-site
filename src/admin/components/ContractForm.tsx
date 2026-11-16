@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { contractApi as api } from '../api';
 import Combobox from './Combobox';
-import { CONTRACT_TYPES, INVOICE_TYPES, AMOUNT_UNITS, OUR_ENTITIES, RENEWAL_TYPES, SETTLE_TYPES, canSeeMoney, fmtSize } from '../types';
+import { CONTRACT_TYPES, INVOICE_TYPES, AMOUNT_UNITS, OUR_ENTITIES, RENEWAL_TYPES, SETTLE_TYPES, canSeeMoney, fmtSize, isInternalContract, defaultInvoiceType, DEFAULT_INTERNAL_INVOICE_TYPE } from '../types';
 import type { Contract, Customer, UserRow } from '../types';
 import { useAuth } from '../auth';
 import { LOGIN_ROLES } from '../types';
@@ -18,7 +18,7 @@ function toForm(c: Contract | null): FormState {
     owner_user_id: c ? String(c.owner_user_id) : '',
     amount: c?.amount != null ? String(c.amount) : '',
     amount_unit: c?.amount_unit ?? '元',
-    invoice_type: c?.invoice_type ?? INVOICE_TYPES[0],
+    invoice_type: c?.invoice_type ?? defaultInvoiceType(c?.type ?? CONTRACT_TYPES[0]),
     settle_type: c?.settle_type ?? '',
     headcount: c?.headcount != null ? String(c.headcount) : '',
     sign_date: c?.sign_date?.slice(0, 10) ?? '',
@@ -50,6 +50,8 @@ export default function ContractForm({
   const [users, setUsers] = useState<UserRow[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // 内部管理类合同（合伙人合作协议 / 内部人员劳动合同）不涉及开票与金额
+  const isInternal = isInternalContract(form.type);
 
   useEffect(() => {
     api<{ customers: Customer[] }>('/customers').then((d) => setCustomers(d.customers));
@@ -62,6 +64,15 @@ export default function ContractForm({
 
   function set(key: string, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  /** 切换合同类型：切到内部管理类合同时，发票类型自动归到差额专票（切换回来时保留原选择） */
+  function setType(type: string) {
+    setForm((f) => ({
+      ...f,
+      type,
+      invoice_type: isInternalContract(type) ? DEFAULT_INTERNAL_INVOICE_TYPE : f.invoice_type,
+    }));
   }
 
   async function submit() {
@@ -92,9 +103,9 @@ export default function ContractForm({
         our_entity: form.our_entity || null,
         customer_name: form.customer_name,
         owner_user_id: canManage ? Number(form.owner_user_id) || null : null,
-        amount: showMoney && form.amount !== '' ? form.amount : null,
-        amount_unit: showMoney ? form.amount_unit || null : null,
-        invoice_type: form.invoice_type,
+        amount: showMoney && !isInternal && form.amount !== '' ? form.amount : null,
+        amount_unit: showMoney && !isInternal ? form.amount_unit || null : null,
+        invoice_type: isInternal ? DEFAULT_INTERNAL_INVOICE_TYPE : form.invoice_type,
         settle_type: form.settle_type || null,
         headcount: form.headcount !== '' ? form.headcount : null,
         sign_date: form.sign_date,
@@ -156,7 +167,7 @@ export default function ContractForm({
           <Combobox
             value={form.type}
             options={CONTRACT_TYPES.map((t) => ({ label: t, value: t }))}
-            onChange={(v) => set('type', v)}
+            onChange={setType}
             editable={false}
           />
         </div>
@@ -190,48 +201,50 @@ export default function ContractForm({
             />
           </div>
         )}
-            <div>
-              <label className="label">发票类型 *</label>
+        {!isInternal && (
+          <div>
+            <label className="label">发票类型 *</label>
+            <Combobox
+              value={form.invoice_type}
+              options={INVOICE_TYPES.map((t) => ({ label: t, value: t }))}
+              onChange={(v) => set('invoice_type', v)}
+              editable={false}
+            />
+          </div>
+        )}
+        {showMoney && !isInternal && (
+          <div className="sm:col-span-2">
+            <label className="label">合同金额（选填，仅登录账号可见）</label>
+            <div className="flex gap-2">
+              <input
+                className="input w-36 shrink-0"
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.amount}
+                onChange={(e) => set('amount', e.target.value)}
+              />
               <Combobox
-                value={form.invoice_type}
-                options={INVOICE_TYPES.map((t) => ({ label: t, value: t }))}
-                onChange={(v) => set('invoice_type', v)}
-                editable={false}
+                wrapperClassName="w-28 shrink-0"
+                inputClassName="input pr-6"
+                placeholder="单位"
+                value={form.amount_unit}
+                options={AMOUNT_UNITS.map((u) => ({ label: u, value: u }))}
+                onChange={(v) => set('amount_unit', v)}
               />
             </div>
-            {showMoney && (
-          <>
-            <div className="sm:col-span-2">
-              <label className="label">合同金额（选填，仅登录账号可见）</label>
-              <div className="flex gap-2">
-                <input
-                  className="input w-36 shrink-0"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.amount}
-                  onChange={(e) => set('amount', e.target.value)}
-                />
-                <Combobox
-                  wrapperClassName="w-28 shrink-0"
-                  inputClassName="input pr-6"
-                  placeholder="单位"
-                  value={form.amount_unit}
-                  options={AMOUNT_UNITS.map((u) => ({ label: u, value: u }))}
-                  onChange={(v) => set('amount_unit', v)}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="label">结算方式</label>
-              <Combobox
-                value={form.settle_type === '' ? '未设置' : form.settle_type}
-                options={[{ label: '未设置', value: '' }, ...SETTLE_TYPES.map((t) => ({ label: t, value: t }))]}
-                onChange={(v) => set('settle_type', v)}
-                editable={false}
-              />
-            </div>
-          </>
+          </div>
+        )}
+        {showMoney && (
+          <div>
+            <label className="label">结算方式</label>
+            <Combobox
+              value={form.settle_type === '' ? '未设置' : form.settle_type}
+              options={[{ label: '未设置', value: '' }, ...SETTLE_TYPES.map((t) => ({ label: t, value: t }))]}
+              onChange={(v) => set('settle_type', v)}
+              editable={false}
+            />
+          </div>
         )}
         <div>
           <label className="label">服务人数</label>

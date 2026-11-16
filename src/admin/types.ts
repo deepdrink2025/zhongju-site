@@ -88,6 +88,22 @@ export const CONTRACT_TYPES = [
   '其他',
 ];
 
+/**
+ * 内部管理类合同：不涉及对外开票与合同金额，
+ * 表单隐藏「发票类型」「合同金额」，发票类型固定提交差额专票。
+ */
+export const INTERNAL_CONTRACT_TYPES = ['合伙人合作协议', '内部人员劳动合同'];
+export const DEFAULT_INTERNAL_INVOICE_TYPE = '差额专票';
+
+export function isInternalContract(type: string | null | undefined): boolean {
+  return INTERNAL_CONTRACT_TYPES.includes(String(type ?? ''));
+}
+
+/** 新建表单的发票类型默认值：内部管理类合同固定为差额专票 */
+export function defaultInvoiceType(type: string | null | undefined): string {
+  return isInternalContract(type) ? DEFAULT_INTERNAL_INVOICE_TYPE : INVOICE_TYPES[0];
+}
+
 export const SETTLE_TYPES = ['月结', '季结', '半年结', '年结', '其他'];
 export const RENEWAL_TYPES = ['自动续签', '需重新签订'];
 
@@ -99,7 +115,7 @@ export const AMOUNT_UNITS = ['元', '元/时/人', '元/天/人', '元/月/人']
 export const CONTRACT_CATEGORIES = [
   { key: 'external', label: '对外业务合同', types: ['劳务派遣', '劳务外包', '代理招聘', '人事托管', '其他'] },
   { key: 'government', label: '政府采购类合同', types: ['政府采购合同'] },
-  { key: 'internal', label: '内部管理类合同', types: ['合伙人合作协议', '内部人员劳动合同'] },
+  { key: 'internal', label: '内部管理类合同', types: INTERNAL_CONTRACT_TYPES },
 ];
 
 export interface CategoryStat {

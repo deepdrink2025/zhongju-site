@@ -8,6 +8,7 @@ import {
   validateContractInput,
   validateCustomerInput,
   CONTRACT_TYPES,
+  DEFAULT_INTERNAL_INVOICE_TYPE,
 } from '../src/contracts/util.js';
 
 test('密码哈希与校验', () => {
@@ -63,6 +64,38 @@ test('合同字段校验', () => {
     amount: 'abc',
   });
   assert.ok(badAmount.errors.some((e) => e.includes('金额')));
+});
+
+test('内部管理类合同不校验发票类型与合同金额', () => {
+  for (const type of ['合伙人合作协议', '内部人员劳动合同']) {
+    // 前端隐藏「发票类型」「合同金额」，不传这两个字段也应通过校验
+    const r = validateContractInput({
+      name: '内部合同', type, customer_name: '某单位', owner_user_id: 1,
+      sign_date: '2026-01-01', start_date: '2026-01-02', end_date: '2027-01-01',
+    });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.values.invoice_type, DEFAULT_INTERNAL_INVOICE_TYPE);
+    assert.equal(r.values.amount, null);
+    assert.equal(r.values.amount_unit, null);
+
+    // 绕过前端直接提交发票类型 / 金额，服务端强制归一
+    const bypass = validateContractInput({
+      name: '内部合同', type, customer_name: '某单位', owner_user_id: 1,
+      invoice_type: '全额普票', amount: '99999', amount_unit: '元',
+      sign_date: '2026-01-01', start_date: '2026-01-02', end_date: '2027-01-01',
+    });
+    assert.deepEqual(bypass.errors, []);
+    assert.equal(bypass.values.invoice_type, DEFAULT_INTERNAL_INVOICE_TYPE);
+    assert.equal(bypass.values.amount, null);
+    assert.equal(bypass.values.amount_unit, null);
+  }
+
+  // 对外业务合同仍必须选发票类型
+  const external = validateContractInput({
+    name: 'x', type: '劳务派遣', customer_name: '某单位', owner_user_id: 1,
+    sign_date: '2026-01-01', start_date: '2026-01-02', end_date: '2027-01-01',
+  });
+  assert.ok(external.errors.some((e) => e.includes('发票类型')));
 });
 
 test('客户字段校验', () => {

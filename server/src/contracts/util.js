@@ -18,10 +18,13 @@ export const SETTLE_TYPES = ['月结', '季结', '半年结', '年结', '其他'
 export const RENEWAL_TYPES = ['自动续签', '需重新签订'];
 export const INVOICE_TYPES = ['全额专票', '全额普票', '差额专票', '差额普票'];
 export const AMOUNT_UNITS = ['元', '元/时/人', '元/天/人', '元/月/人'];
+/** 内部管理类合同：不涉及对外开票与合同金额 */
+export const INTERNAL_CONTRACT_TYPES = ['合伙人合作协议', '内部人员劳动合同'];
+export const DEFAULT_INTERNAL_INVOICE_TYPE = '差额专票';
 export const CONTRACT_CATEGORIES = [
   { key: 'external', label: '对外业务合同', types: ['劳务派遣', '劳务外包', '代理招聘', '人事托管', '其他'] },
   { key: 'government', label: '政府采购类合同', types: ['政府采购合同'] },
-  { key: 'internal', label: '内部管理类合同', types: ['合伙人合作协议', '内部人员劳动合同'] },
+  { key: 'internal', label: '内部管理类合同', types: INTERNAL_CONTRACT_TYPES },
 ];
 export const TOKEN_EXPIRE_HOURS = Number(process.env.TOKEN_EXPIRE_HOURS || 12);
 export const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -83,6 +86,10 @@ export function sanitizeContract(row, role, now = new Date()) {
   return c;
 }
 
+export function isInternalContract(type) {
+  return INTERNAL_CONTRACT_TYPES.includes(String(type ?? '').trim());
+}
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const str = (v) => (v == null ? '' : String(v).trim());
 
@@ -118,15 +125,18 @@ export function validateContractInput(body) {
   const start_date = pickDate('生效日期', body.start_date, true);
   const end_date = pickDate('到期日期', body.end_date, true);
 
+  // 内部管理类合同不涉及开票与金额，服务端强制归一，避免绕过前端直接提交
+  const internal = isInternalContract(type);
+
   let amount = null;
-  if (body.amount !== undefined && body.amount !== null && str(body.amount) !== '') {
+  if (!internal && body.amount !== undefined && body.amount !== null && str(body.amount) !== '') {
     const n = Number(body.amount);
     if (!Number.isFinite(n) || n < 0 || n > 99999999999) errors.push('合同金额不合法');
     else amount = Math.round(n * 100) / 100;
   }
-  const amount_unit = str(body.amount_unit) ? str(body.amount_unit).slice(0, 20) : null;
-  const invoice_type = str(body.invoice_type);
-  if (!INVOICE_TYPES.includes(invoice_type)) errors.push('请选择发票类型');
+  const amount_unit = !internal && str(body.amount_unit) ? str(body.amount_unit).slice(0, 20) : null;
+  const invoice_type = internal ? DEFAULT_INTERNAL_INVOICE_TYPE : str(body.invoice_type);
+  if (!internal && !INVOICE_TYPES.includes(invoice_type)) errors.push('请选择发票类型');
 
   let headcount = null;
   if (body.headcount !== undefined && body.headcount !== null && str(body.headcount) !== '') {
