@@ -24,13 +24,13 @@ elif args[:1]==['exec']:
         path=bin_dir/name;path.write_text(content);path.chmod(0o755)
     env=dict(os.environ,PATH=str(bin_dir)+os.pathsep+os.environ['PATH'])
     deploy=root/'deploy';deploy.mkdir();shutil.copy2(source/'deploy/deploy.sh',deploy/'deploy.sh')
-    staff,admin='regression-staff-passcode','regression-admin-passcode'
-    (deploy/'.env').write_text(f'HTTP_PORT=8080\nDB_HOST=mysql-common\nDB_USER=zhongju\nDB_PASSWORD=test-db\nDB_NAME=zhongju_cards\nSHARED_NETWORK=bridge-network\nMYSQL_ROOT_PASSWORD=\nSTAFF_TOKEN={staff}\nADMIN_TOKEN={admin}\nTOKEN_SECRET='+'a'*64+'\n')
+    admin_pw='regression-admin-password'
+    (deploy/'.env').write_text(f'HTTP_PORT=8080\nDB_HOST=mysql-common\nDB_USER=zhongju\nDB_PASSWORD=test-db\nDB_NAME=zhongju_cards\nSHARED_NETWORK=bridge-network\nMYSQL_ROOT_PASSWORD=\nINIT_ADMIN_USER=admin\nINIT_ADMIN_PASSWORD={admin_pw}\nINIT_ADMIN_NAME=主管理员\nTOKEN_EXPIRE_HOURS=12\n')
     failed=subprocess.run(['bash',str(deploy/'deploy.sh')],env=env,capture_output=True,text=True)
     assert failed.returncode!=0 and '部署完成' not in failed.stdout
     succeeded=subprocess.run(['bash',str(deploy/'deploy.sh')],env=dict(env,TEST_HTTP_EXIT='0'),capture_output=True,text=True)
     assert succeeded.returncode==0 and '部署完成' in succeeded.stdout
-    assert all(secret not in failed.stdout+succeeded.stdout for secret in [staff,admin])
+    assert all(secret not in failed.stdout+succeeded.stdout for secret in [admin_pw])
     print('PASS failed health check returns nonzero; normal deployment output hides credentials')
     boot=root/'bootstrap';boot.mkdir();shutil.copy2(source/'deploy/bootstrap.py',boot/'bootstrap.py')
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]

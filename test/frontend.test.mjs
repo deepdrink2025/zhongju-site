@@ -8,7 +8,8 @@ import { renderToString } from 'react-dom/server';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-let vite, facade, service, CardPage, auth;
+let vite, store, adminApi, codec, CardPage;
+
 class Storage {
   data = new Map();
   getItem(key) {
@@ -27,20 +28,18 @@ class Storage {
 const response = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 const nativeFetch = globalThis.fetch;
+
 before(async () => {
   vite = await createServer({
     root,
     configFile: false,
     plugins: [react()],
     server: { middlewareMode: true, hmr: false, watch: null },
-    define: {
-      'import.meta.env.VITE_CARD_SERVER': '"on"',
-      'import.meta.env.VITE_CARD_API_BASE': '""',
-    },
+    define: { 'import.meta.env.VITE_CARD_API_BASE': '""' },
   });
-  facade = await vite.ssrLoadModule('/src/utils/cardStore.ts');
-  service = await vite.ssrLoadModule('/src/utils/cardService.ts');
-  auth = await vite.ssrLoadModule('/src/utils/cardAuth.ts');
+  store = await vite.ssrLoadModule('/src/utils/cardStore.ts');
+  adminApi = await vite.ssrLoadModule('/src/admin/api.ts');
+  codec = await vite.ssrLoadModule('/src/utils/cardCodec.ts');
   CardPage = (await vite.ssrLoadModule('/src/pages/CardPage.tsx')).default;
 });
 after(async () => {
@@ -49,9 +48,8 @@ after(async () => {
 });
 beforeEach(() => {
   globalThis.localStorage = new Storage();
-  globalThis.sessionStorage = new Storage();
   globalThis.window = {
-    location: { origin: 'https://example.com', hash: '' },
+    location: { origin: 'https://example.com', hash: '', search: '' },
     setTimeout,
     clearTimeout,
     setInterval,
@@ -61,23 +59,10 @@ beforeEach(() => {
     removeEventListener() {},
     scrollTo() {},
   };
-  sessionStorage.setItem(
-    'zhongju_card_auth',
-    JSON.stringify({ token: 'test-token', role: 'staff', exp: Date.now() + 100000 })
-  );
+  adminApi.setToken('test-token');
 });
-test('failed and unauthorized deletion retains the local index; successful deletion clears it', async () => {
-  service.rememberCode('abcd2345');
-  for (const status of [403, 500]) {
-    globalThis.fetch = async () => response(status, { ok: false, error: 'failed' });
-    assert.equal(await facade.removeCardAsync('abcd2345'), false);
-    assert.deepEqual(service.myCodes(), ['abcd2345']);
-  }
-  globalThis.fetch = async () => response(200, { ok: true });
-  assert.equal(await facade.removeCardAsync('abcd2345'), true);
-  assert.deepEqual(service.myCodes(), []);
-});
-test('a new browser retrieves its owned records from the server, without a 20-card cutoff', async () => {
+
+test('名片分页列表不受 20 张上限限制', async () => {
   const cards = Array.from({ length: 25 }, (_, i) => ({
     id: String(i),
     shortCode: 'abcd' + i.toString(16).padStart(4, '0'),
@@ -87,7 +72,6 @@ test('a new browser retrieves its owned records from the server, without a 20-ca
     phone: '13800000000',
     wechat: '',
     bio: '',
-    avatar: '',
     status: 'active',
     createdAt: i,
     updatedAt: i,
@@ -97,27 +81,41 @@ test('a new browser retrieves its owned records from the server, without a 20-ca
     assert.match(path, /\/api\/cards\/mine\?/);
     return response(200, { ok: true, items: cards, total: 25 });
   };
-  assert.equal((await facade.listMyCardsAsync()).length, 25);
-  for (let i = 0; i < 25; i++) service.rememberCode(String(i));
-  assert.equal(service.myCodes().length, 25);
+  assert.equal((await store.listMyCardsAsync()).length, 25);
 });
-test('expired authentication is cleared on 401 and a recovery code persists across logins', async () => {
+
+test('登录态失效：401 清空统一 token 并广播事件', async () => {
   let dispatched = 0;
   window.dispatchEvent = () => dispatched++;
   globalThis.fetch = async () => response(401, { ok: false, error: 'expired' });
-  await facade.listAllCardsAsync();
-  assert.equal(auth.getToken(), null);
+  const result = await store.listAllCardsAsync();
+  assert.equal(result.ok, false);
+  assert.equal(adminApi.getToken(), null);
   assert.equal(dispatched, 1);
-  const device = auth.getRecoveryCode();
-  assert.match(device, /^[a-f0-9]{32}$/);
-  globalThis.fetch = async (_path, init) => {
-    assert.equal(JSON.parse(init.body).deviceId, device);
-    return response(200, { ok: true, token: 'new-token', role: 'staff', exp: Date.now() + 100000 });
-  };
-  assert.equal((await auth.login('test-pass', device)).ok, true);
-  assert.equal(auth.getRecoveryCode(), device);
 });
-test('a response-body stall remains covered by the request timeout', async () => {
+
+test('删除名片：服务端失败保留数据，404 视为已删除', async () => {
+  for (const status of [403, 500]) {
+    globalThis.fetch = async () => response(status, { ok: false, error: 'failed' });
+    assert.equal(await store.removeCardAsync('abcd2345'), false);
+  }
+  globalThis.fetch = async () => response(404, { ok: false, error: 'not found' });
+  assert.equal(await store.removeCardAsync('abcd2345'), true);
+  globalThis.fetch = async () => response(200, { ok: true });
+  assert.equal(await store.removeCardAsync('abcd2345'), true);
+});
+
+test('改派归属按账号 id 提交', async () => {
+  let body = null;
+  globalThis.fetch = async (_path, init) => {
+    body = JSON.parse(init.body);
+    return response(200, { ok: true });
+  };
+  assert.equal(await store.assignCardOwnerAsync('abcd2345', 7), true);
+  assert.deepEqual(body, { user_id: 7 });
+});
+
+test('响应体卡住时仍由请求超时兜底', async () => {
   let fire;
   window.setTimeout = (fn) => {
     fire = fn;
@@ -133,9 +131,15 @@ test('a response-body stall remains covered by the request timeout', async () =>
         queueMicrotask(fire);
       }),
   });
-  const result = await facade.listAllCardsAsync();
+  const result = await store.listAllCardsAsync();
   assert.equal(result.ok, false);
 });
+
+test('二维码安全阈值按 UTF-8 字节计算', () => {
+  assert.equal(codec.isQrSafe('https://example.com/card/abcd2345'), true);
+  assert.equal(codec.isQrSafe('https://example.com/card/' + '名'.repeat(500)), false);
+});
+
 function render(path) {
   const original = console.error;
   console.error = (...args) => {
@@ -157,7 +161,8 @@ function render(path) {
     console.error = original;
   }
 }
-test('server mode rejects unsigned legacy identities, including long avatar payloads', () => {
+
+test('旧的 hash 名片链接不再渲染身份信息', () => {
   const forged = {
     name: '伪造身份',
     phone: '13800000000',
@@ -166,12 +171,31 @@ test('server mode rejects unsigned legacy identities, including long avatar payl
   const hash = '#d=' + Buffer.from(JSON.stringify(forged)).toString('base64url');
   window.location.hash = hash;
   const html = render('/card' + hash);
-  assert.ok(html.includes('旧版名片链接已停用'));
+  assert.ok(html.includes('未找到该名片'));
   assert.ok(!html.includes(forged.name));
   assert.ok(!html.includes('<canvas'));
 });
-test('bare /card does not enter a permanent loading skeleton', () => {
+
+test('裸 /card 不进入永久骨架屏', () => {
   const html = render('/card');
   assert.ok(html.includes('未找到该名片'));
   assert.ok(!html.includes('animate-pulse'));
+});
+
+test('后台各页面模块可加载（统一后台路由齐全）', async () => {
+  for (const path of [
+    '/src/admin/pages/Login.tsx',
+    '/src/admin/pages/Dashboard.tsx',
+    '/src/admin/pages/Cards.tsx',
+    '/src/admin/pages/Contracts.tsx',
+    '/src/admin/pages/ContractDetail.tsx',
+    '/src/admin/pages/Users.tsx',
+    '/src/admin/components/Layout.tsx',
+    '/src/admin/components/ContractForm.tsx',
+  ]) {
+    const mod = await vite.ssrLoadModule(path);
+    assert.equal(typeof mod.default, 'function', path);
+  }
+  const app = await vite.ssrLoadModule('/src/App.tsx');
+  assert.equal(typeof app.default, 'function');
 });

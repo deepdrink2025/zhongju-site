@@ -1,5 +1,13 @@
+/**
+ * 统一认证模块（名片 + 合同共用）
+ * - 账号来源：users 表（用户名 + scrypt 密码）
+ * - 会话来源：contract_sessions 表（token hash + user_id）
+ * - 防护：IP 限流 + 账号级失败锁定 + 登录日志
+ */
 import crypto from 'node:crypto';
-import { sha256, verifyPassword, TOKEN_EXPIRE_HOURS, LOGIN_ROLES } from './util.js';
+import { sha256, verifyPassword, TOKEN_EXPIRE_HOURS, ROLES } from './contracts/util.js';
+
+export const LOGIN_ROLES = ROLES; // 三种角色均可登录
 
 const WINDOW = 10 * 60 * 1000;
 const MAX_FAILS = Number(process.env.LOGIN_LIMIT || 10);
@@ -61,6 +69,8 @@ export function clearUserFails(username) {
   userFails.delete(username);
 }
 
+// ---------- 登录 / 会话 ----------
+
 export async function doLogin(pool, username, password) {
   const name = String(username || '').trim();
   if (!name || !password) return null;
@@ -69,9 +79,20 @@ export async function doLogin(pool, username, password) {
   const ok =
     user &&
     user.status === 'active' &&
-    LOGIN_ROLES.includes(user.role) && // 业务人员档案不参与登录
+    LOGIN_ROLES.includes(user.role) &&
     verifyPassword(password, user.salt, user.password_hash);
   return ok ? user : null;
+}
+
+export async function addLoginLog(pool, username, userId, ip, success) {
+  try {
+    await pool.query(
+      'INSERT INTO contract_login_logs (username, user_id, ip, success) VALUES (?, ?, ?, ?)',
+      [String(username || '').slice(0, 50), userId ?? null, ip, success ? 1 : 0]
+    );
+  } catch {
+    // 日志失败不阻断登录
+  }
 }
 
 export async function createSession(pool, userId) {

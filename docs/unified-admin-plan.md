@@ -1,8 +1,27 @@
-# 统一后台管理方案（名片管理 + 合同管理）· v2
+# 统一后台管理方案（名片管理 + 合同管理）· v3（已实施）
 
-> 状态：待审阅（本文档为方案，未经确认不开始实施）
-> 日期：2026-11-16（v2：项目未正式运营，去除全部旧系统兼容与过渡设计，全新体系）
+> 状态：**已实施完成**（决策点 D1-D4 均按建议执行）
+> 日期：2026-11-16（v2：项目未正式运营，去除全部旧系统兼容与过渡设计，全新体系；v3：补充实施结果）
 > 前提：仅保留两类既有数据——① 名片数据（zhongju_cards 库 cards 表）；② 官网企业页面内容。其余（旧口令、恢复码、旧会话、旧链接）一律弃用。
+
+## 实施结果速览
+
+| 项 | 结果 |
+|---|---|
+| 后端 | `server/src/auth.js` 统一认证；`app.js` 重写为 `/api/auth/*` + 名片 API；`/api/contract/*` 保留 |
+| 数据 | `cards.owner_user_id`、`card_daily_usage(user_id, day_key)`、`card_sessions` 已删除；迁移幂等 |
+| 初始化 | `server/sql/init-admin.mjs`（幂等）+ 存量名片归属迁移 |
+| 前端 | `src/admin/` 全套（api / auth / types / components / pages）；`src/contracts/` 已并入并删除 |
+| 路由 | `/admin`、`/admin/login`、`/admin/cards`、`/admin/contracts`、`/admin/contracts/:id`、`/admin/users` |
+| 部署 | `.env` 去双口令与 `TOKEN_SECRET`，改用 `INIT_ADMIN_*`；`deploy.sh` 自动创建主管理员 |
+| 测试 | 服务端 35 + 10 + 5 全通过；前端 8 项全通过；部署回归 2 项通过；`npm run build` 通过 |
+
+实际与方案的差异：
+1. 合同页面直接迁入 `src/admin/{pages,components}`，`src/contracts/` 目录整体删除（未保留兼容层）。
+2. `CardCreatePanel` / `AdminCardList` 保留在 `src/components/`（官网与后台共用），仅清理口令与恢复码逻辑。
+3. `src/utils/cardCodec.ts` 精简为类型 + 二维码长度阈值，`encodeCard`/`decodeCard`/本地存储全部移除。
+4. 改派归属弹窗改为**选择账号**（`GET /api/contract/users`）而非输入恢复码。
+
 
 ## 一、目标
 
@@ -75,7 +94,7 @@ DELETE /api/cards/:code       删除（本人或 admin）
 /admin/cards            名片管理（创建 + 列表，沿用现组件）
 /admin/contracts        合同列表
 /admin/contracts/:id    合同详情
-/admin/users            用户管理（仅 admin）
+/admin/users            用户管理（admin / contract_admin 可查看，仅 admin 可增改）
 *                       → 官网首页
 ```
 

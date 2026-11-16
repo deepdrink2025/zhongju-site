@@ -1,6 +1,7 @@
 export type Role = 'admin' | 'contract_admin' | 'staff';
 
-export const LOGIN_ROLES: Role[] = ['admin', 'contract_admin'];
+/** 三种角色均可登录统一后台，可见菜单按角色收敛 */
+export const LOGIN_ROLES: Role[] = ['admin', 'contract_admin', 'staff'];
 
 export interface AuthUser {
   id: number;
@@ -125,7 +126,7 @@ export interface StatsResponse {
 export const ROLE_LABELS: Record<Role, string> = {
   admin: '主管理员',
   contract_admin: '合同管理员',
-  staff: '业务人员（不登录）',
+  staff: '业务员',
 };
 
 export const ACTION_LABELS: Record<string, string> = {

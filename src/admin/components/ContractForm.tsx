@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { contractApi as api } from '../api';
 import Combobox from './Combobox';
 import { CONTRACT_TYPES, INVOICE_TYPES, AMOUNT_UNITS, OUR_ENTITIES, RENEWAL_TYPES, SETTLE_TYPES, canSeeMoney, fmtSize } from '../types';
 import type { Contract, Customer, UserRow } from '../types';
-import { useAuth } from '../ContractsApp';
+import { useAuth } from '../auth';
 import { LOGIN_ROLES } from '../types';
 
 type FormState = Record<string, string>;

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, setToken } from '../api';
+import { useAuth } from '../auth';
 import type { AuthUser } from '../types';
-import { useAuth } from '../ContractsApp';
 
 export default function Login() {
   const { setUser } = useAuth();
@@ -23,7 +23,7 @@ export default function Login() {
       });
       setToken(d.token);
       setUser(d.user);
-      navigate('/contracts');
+      navigate('/admin');
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -34,8 +34,8 @@ export default function Login() {
   return (
     <div className="grid min-h-screen place-items-center bg-slate-100 px-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-md">
-        <h1 className="mb-1 text-center text-xl font-bold text-ct-700">中聚人力 · 合同管理</h1>
-        <p className="mb-6 text-center text-xs text-slate-400">内部系统，请使用公司分配的账号登录</p>
+        <h1 className="mb-1 text-center text-xl font-bold text-ct-700">中聚人力 · 内部管理后台</h1>
+        <p className="mb-6 text-center text-xs text-slate-400">名片与合同统一入口，请使用公司分配的账号登录</p>
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="label">登录名</label>
@@ -44,6 +44,7 @@ export default function Login() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
+              autoFocus
             />
           </div>
           <div>

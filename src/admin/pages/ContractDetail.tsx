@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, downloadFile, getToken } from '../api';
+import { contractApi as api, downloadFile, getToken } from '../api';
 import Modal from '../components/Modal';
 import ContractForm from '../components/ContractForm';
 import {
@@ -12,7 +12,7 @@ import {
   fmtSize,
 } from '../types';
 import type { Contract, FileRow, LogRow } from '../types';
-import { useAuth } from '../ContractsApp';
+import { useAuth } from '../auth';
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (

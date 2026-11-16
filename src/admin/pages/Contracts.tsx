@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, getToken } from '../api';
+import { contractApi as api, getToken } from '../api';
 import Modal from '../components/Modal';
 import ContractForm from '../components/ContractForm';
 import { CONTRACT_TYPES, STATUS_COLORS, fmtDate, fmtMoney, canSeeMoney } from '../types';
 import type { CategoryStat, Contract, StatsResponse } from '../types';
-import { useAuth } from '../ContractsApp';
+import { useAuth } from '../auth';
 
 function statusOptions(isAdmin: boolean): [string, string][] {
   const opts: [string, string][] = [

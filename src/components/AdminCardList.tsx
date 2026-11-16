@@ -1,10 +1,12 @@
 /**
- * 名片管理列表（管理员/本地模式预览用）
- * 不含门禁与顶栏，由控制台按角色挂载
+ * 名片管理列表（仅主管理员可见）
+ * 不含门禁与顶栏，由后台 Layout 挂载
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import { copyText } from '../utils/clipboard';
+import { contractApi } from '../admin/api';
+import type { UserRow } from '../admin/types';
 import {
   cardUrlOfCode,
   listAllCardsAsync,
@@ -32,7 +34,9 @@ export default function AdminCardList() {
   const [busyCode, setBusyCode] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [ownerCard, setOwnerCard] = useState<CardRecord | null>(null);
-  const [ownerCode, setOwnerCode] = useState('');
+  const [ownerUserId, setOwnerUserId] = useState<number | ''>('');
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [usersError, setUsersError] = useState('');
   const [query, setQuery] = useState('');
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
@@ -112,9 +116,37 @@ export default function AdminCardList() {
     }
   };
 
+  /** 打开归属改派弹窗：拉取可归属的账号列表 */
+  const openOwner = async (card: CardRecord) => {
+    setOwnerCard(card);
+    setOwnerUserId(card.ownerUserId ?? '');
+    setUsersError('');
+    try {
+      const data = await contractApi<{ users: UserRow[] }>('/users');
+      setUsers(data.users.filter((u) => u.status === 'active' && u.role !== 'contract_admin'));
+    } catch (e) {
+      setUsersError((e as Error).message || '账号列表加载失败');
+    }
+  };
+
+  const handleAssign = async () => {
+    if (!ownerCard || ownerUserId === '') return;
+    setBusyCode(ownerCard.shortCode);
+    const ok = await assignCardOwnerAsync(ownerCard.shortCode, Number(ownerUserId));
+    setBusyCode(null);
+    if (ok) {
+      setOwnerCard(null);
+      setOwnerUserId('');
+      showToast('归属已更新');
+      await load();
+    } else {
+      showToast('分配失败，请重试');
+    }
+  };
+
   return (
     <>
-      <div className="mx-auto w-full max-w-5xl px-4 py-8">
+      <div className="mx-auto w-full max-w-5xl">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-neutral-900">全部名片</h1>
@@ -224,24 +256,24 @@ export default function AdminCardList() {
                 <p className="tnum mt-0.5 truncate text-xs text-neutral-400">
                   /card/{card.shortCode} · {formatTime(card.createdAt)}
                 </p>
+                <p className="mt-0.5 text-xs text-neutral-400">
+                  归属：{card.ownerName || '未分配（历史名片）'}
+                </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
                 <a
-                  href={`/admin?edit=${encodeURIComponent(card.shortCode)}`}
+                  href={`/admin/cards?edit=${encodeURIComponent(card.shortCode)}`}
                   className="rounded-full border border-neutral-200 px-3 py-1.5 text-neutral-700"
                 >
                   编辑
                 </a>
                 <button
                   type="button"
-                  onClick={() => {
-                    setOwnerCard(card);
-                    setOwnerCode('');
-                  }}
+                  onClick={() => void openOwner(card)}
                   className="rounded-full border border-neutral-200 px-3 py-1.5 text-neutral-700"
                 >
-                  分配归属
+                  改派归属
                 </button>
                 <a
                   href={cardUrlOfCode(card.shortCode)}
@@ -307,37 +339,34 @@ export default function AdminCardList() {
       {ownerCard && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6">
-            <h2 className="font-bold">分配「{ownerCard.name}」的管理归属</h2>
+            <h2 className="font-bold">改派「{ownerCard.name}」的名片归属</h2>
             <p className="mt-3 text-sm text-neutral-500">
-              填写本人提供的恢复码。保存后，该恢复码的持有人可修改和删除这张名片。
+              归属账号将可编辑、删除这张名片，名片链接与二维码保持不变。
             </p>
-            <input
-              type="password"
-              autoComplete="off"
-              maxLength={32}
-              value={ownerCode}
-              onChange={(e) => setOwnerCode(e.target.value.trim().toLowerCase())}
-              placeholder="32 位恢复码"
+            {usersError && <p className="mt-3 text-sm text-red-600">{usersError}</p>}
+            <select
+              value={ownerUserId}
+              onChange={(e) => setOwnerUserId(e.target.value ? Number(e.target.value) : '')}
               className="mt-4 w-full rounded-lg border p-3"
-            />
+            >
+              <option value="">请选择账号</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}（{u.username}）
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-neutral-400">
+              当前归属：{ownerCard.ownerName || '未分配'}
+            </p>
             <div className="mt-4 flex justify-end gap-4">
               <button type="button" onClick={() => setOwnerCard(null)}>
                 取消
               </button>
               <button
                 type="button"
-                disabled={!/^[a-f0-9]{32}$/.test(ownerCode) || !!busyCode}
-                onClick={async () => {
-                  setBusyCode(ownerCard.shortCode);
-                  const ok = await assignCardOwnerAsync(ownerCard.shortCode, ownerCode);
-                  setBusyCode(null);
-                  if (ok) {
-                    setOwnerCard(null);
-                    setOwnerCode('');
-                    showToast('归属已更新');
-                    await load();
-                  } else showToast('分配失败，请重试');
-                }}
+                disabled={ownerUserId === '' || !!busyCode}
+                onClick={handleAssign}
                 className="text-brand-600 disabled:opacity-30"
               >
                 保存归属

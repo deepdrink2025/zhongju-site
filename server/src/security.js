@@ -38,22 +38,6 @@ export function trustProxyConfig(value) {
     .filter(Boolean);
 }
 
-export function validateProductionSecrets({ staffToken, adminToken, tokenSecret }) {
-  for (const [name, value, min] of [
-    ['STAFF_TOKEN', staffToken, 16],
-    ['ADMIN_TOKEN', adminToken, 16],
-    ['TOKEN_SECRET', tokenSecret, 32],
-  ]) {
-    if (
-      typeof value !== 'string' ||
-      value.length < min ||
-      /请|改成|change.?me|example|placeholder/i.test(value)
-    )
-      throw new Error(`${name} must be a strong non-placeholder value (minimum ${min} characters)`);
-  }
-  if (staffToken === adminToken) throw new Error('Staff and administrator passcodes must differ');
-}
-
 export function quotaClock(timeZone) {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone,

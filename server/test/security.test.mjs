@@ -2,20 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createApp } from '../src/app.js';
-import { fakePool } from './fakePool.mjs';
-import {
-  quotaClock,
-  validateProductionSecrets,
-  WindowLimiter,
-  trustProxyConfig,
-} from '../src/security.js';
+import { fakePool, TEST_PASSWORDS } from './fakePool.mjs';
+import { quotaClock, WindowLimiter, trustProxyConfig } from '../src/security.js';
 
-const STAFF = 'test-staff-passcode-1234',
-  ADMIN = 'test-admin-passcode-1234',
-  SECRET = 'test-signing-key-12345678901234567890';
-const DEVICE_A = 'a'.repeat(32),
-  DEVICE_B = 'b'.repeat(32),
-  DEVICE_ADMIN = 'c'.repeat(32);
 const CARD = {
   name: '回归测试',
   phone: '13800000000',
@@ -25,15 +14,10 @@ const CARD = {
   bio: '测试',
   avatar: '',
 };
+
 async function fixture(t, options = {}) {
   const pool = options.pool || fakePool();
-  const app = createApp({
-    pool,
-    staffToken: STAFF,
-    adminToken: ADMIN,
-    tokenSecret: SECRET,
-    ...options,
-  });
+  const app = createApp({ pool, ...options });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -50,11 +34,8 @@ async function fixture(t, options = {}) {
     });
     return { status: response.status, headers: response.headers, data: await response.json() };
   };
-  const login = async (device = DEVICE_A, passcode = STAFF) => {
-    const result = await req('/api/admin/login', {
-      method: 'POST',
-      body: { passcode, deviceId: device },
-    });
+  const login = async (username = 'staff', password = TEST_PASSWORDS[username]) => {
+    const result = await req('/api/auth/login', { method: 'POST', body: { username, password } });
     assert.equal(result.status, 200, JSON.stringify(result.data));
     return result.data.token;
   };
@@ -67,63 +48,77 @@ test('forged forwarding headers cannot reset login limits; legacy passcodes are 
   for (const ip of ['198.51.100.1', '198.51.100.1', '198.51.100.2'])
     status.push(
       (
-        await f.req('/api/admin/login', {
+        await f.req('/api/auth/login', {
           method: 'POST',
-          body: { passcode: 'wrong' },
+          body: { username: 'staff', password: 'wrong' },
           headers: { 'X-Forwarded-For': ip },
         })
       ).status
     );
   assert.deepEqual(status, [401, 401, 429]);
-  assert.equal((await f.req('/api/cards', { headers: { 'X-Card-Token': ADMIN } })).status, 401);
+  assert.equal((await f.req('/api/cards', { headers: { 'X-Card-Token': 'legacy' } })).status, 401);
+  assert.equal((await f.req('/api/admin/login', { method: 'POST', body: { passcode: 'x' } })).status, 404);
   assert.equal(trustProxyConfig('false'), false);
   assert.throws(() => trustProxyConfig('true'));
 });
+
 test('successful logins do not consume the failure allowance', async (t) => {
   const f = await fixture(t, { loginLimit: 2 });
   for (let i = 0; i < 4; i++) await f.login();
   assert.equal(
-    (await f.req('/api/admin/login', { method: 'POST', body: { passcode: 'wrong' } })).status,
+    (
+      await f.req('/api/auth/login', {
+        method: 'POST',
+        body: { username: 'staff', password: 'wrong' },
+      })
+    ).status,
     401
   );
 });
-test('device quota persists, does not share a NAT quota, and restores the same assets', async (t) => {
+
+test('quota is counted per account, survives restart, and stays independent of NAT ip', async (t) => {
   const f = await fixture(t, { dailyLimit: 1 });
-  const a = await f.login(),
-    b = await f.login(DEVICE_B);
-  const first = await f.req('/api/cards', { method: 'POST', body: CARD, token: a });
+  const staff = await f.login('staff');
+  const staff2 = await f.login('staff2');
+  const admin = await f.login('admin', TEST_PASSWORDS.admin);
+
+  const first = await f.req('/api/cards', { method: 'POST', body: CARD, token: staff });
   assert.equal(first.status, 200);
   assert.equal(
     (
       await f.req('/api/cards', {
         method: 'POST',
         body: CARD,
-        token: a,
+        token: staff,
         headers: { 'X-Forwarded-For': '203.0.113.5' },
       })
     ).status,
     429
   );
-  assert.equal((await f.req('/api/cards', { method: 'POST', body: CARD, token: b })).status, 200);
-  const restored = await f.login(DEVICE_A);
-  const mine = await f.req('/api/cards/mine', { token: restored });
+  // 其他账号配额不受影响
+  assert.equal((await f.req('/api/cards', { method: 'POST', body: CARD, token: staff2 })).status, 200);
+  assert.equal((await f.req('/api/cards', { method: 'POST', body: CARD, token: admin })).status, 200);
+
+  const mine = await f.req('/api/cards/mine', { token: staff });
   assert.equal(mine.data.total, 1);
   assert.equal(mine.data.items[0].shortCode, first.data.record.shortCode);
-  const quota = await f.req('/api/quota', { token: restored });
+  const quota = await f.req('/api/quota', { token: staff });
   assert.equal(quota.data.quota.remaining, 0);
   assert.equal(quota.data.quota.timeZone, 'Asia/Shanghai');
+
   const restart = await fixture(t, { pool: f.pool, dailyLimit: 1 });
-  const afterRestart = await restart.login();
+  const afterRestart = await restart.login('staff');
   assert.equal(
     (await restart.req('/api/cards', { method: 'POST', body: CARD, token: afterRestart })).status,
     429
   );
 });
+
 test('only the owner or administrator can edit/delete; editing preserves the short link', async (t) => {
   const f = await fixture(t);
-  const a = await f.login(),
-    b = await f.login(DEVICE_B),
-    admin = await f.login(DEVICE_ADMIN, ADMIN);
+  const a = await f.login('staff');
+  const b = await f.login('staff2');
+  const admin = await f.login('admin', TEST_PASSWORDS.admin);
   const created = await f.req('/api/cards', { method: 'POST', body: CARD, token: a });
   const code = created.data.record.shortCode;
   for (const [path, method, body] of [
@@ -162,17 +157,50 @@ test('only the owner or administrator can edit/delete; editing preserves the sho
   assert.equal((await f.req(`/api/cards/${code}`)).data.record, undefined);
   assert.equal((await f.req(`/api/cards/${code}`, { method: 'DELETE', token: a })).status, 200);
 });
-test('passcode rotation revokes the relevant role and logout revokes a stored session', async (t) => {
+
+test('administrator can reassign a card to another account', async (t) => {
   const f = await fixture(t);
-  const staff = await f.login(),
-    admin = await f.login(DEVICE_ADMIN, ADMIN);
-  const rotated = await fixture(t, { pool: f.pool, staffToken: STAFF + 'changed' });
-  assert.equal((await rotated.req('/api/admin/me', { token: staff })).status, 401);
-  assert.equal((await rotated.req('/api/admin/me', { token: admin })).status, 200);
-  assert.equal((await f.req('/api/admin/logout', { method: 'POST', token: staff })).status, 200);
-  const restart = await fixture(t, { pool: f.pool });
-  assert.equal((await restart.req('/api/admin/me', { token: staff })).status, 401);
+  const admin = await f.login('admin', TEST_PASSWORDS.admin);
+  const owner = await f.login('staff');
+  const target = await f.login('staff2');
+  const created = await f.req('/api/cards', { method: 'POST', body: CARD, token: owner });
+  const code = created.data.record.shortCode;
+
+  assert.equal(
+    (await f.req(`/api/cards/${code}/owner`, { method: 'PUT', body: { user_id: 3 }, token: owner })).status,
+    403
+  );
+  assert.equal(
+    (await f.req(`/api/cards/${code}/owner`, { method: 'PUT', body: { user_id: 999 }, token: admin })).status,
+    400
+  );
+  assert.equal(
+    (await f.req(`/api/cards/${code}/owner`, { method: 'PUT', body: { user_id: 3 }, token: admin })).status,
+    200
+  );
+  assert.equal((await f.req(`/api/cards/${code}/manage`, { token: target })).status, 200);
+  assert.equal((await f.req(`/api/cards/${code}/manage`, { token: owner })).status, 403);
 });
+
+test('logout revokes the stored session; disabled accounts cannot log in', async (t) => {
+  const f = await fixture(t);
+  const staff = await f.login('staff');
+  assert.equal((await f.req('/api/auth/me', { token: staff })).status, 200);
+  assert.equal((await f.req('/api/auth/logout', { method: 'POST', token: staff })).status, 200);
+  assert.equal((await f.req('/api/auth/me', { token: staff })).status, 401);
+
+  f.pool.users.find((u) => u.username === 'staff2').status = 'disabled';
+  assert.equal(
+    (
+      await f.req('/api/auth/login', {
+        method: 'POST',
+        body: { username: 'staff2', password: TEST_PASSWORDS.staff2 },
+      })
+    ).status,
+    401
+  );
+});
+
 test('avatar validation rejects external/SVG/malformed/oversized images and normalizes a real PNG', async (t) => {
   const f = await fixture(t);
   const token = await f.login();
@@ -202,9 +230,10 @@ test('avatar validation rejects external/SVG/malformed/oversized images and norm
   assert.equal(meta.width, 180);
   assert.equal(meta.height, 180);
 });
+
 test('admin search/pagination reaches old rows beyond 500, and invalid pagination returns 400', async (t) => {
   const f = await fixture(t);
-  const token = await f.login(DEVICE_ADMIN, ADMIN);
+  const token = await f.login('admin', TEST_PASSWORDS.admin);
   for (let i = 0; i < 601; i++)
     f.pool.rows.push({
       ...CARD,
@@ -213,7 +242,7 @@ test('admin search/pagination reaches old rows beyond 500, and invalid paginatio
       status: i % 2 ? 'active' : 'disabled',
       created_at: i,
       updated_at: i,
-      owner_key: null,
+      owner_user_id: 1,
       name: i === 0 ? '最旧名片' : '员工',
     });
   const first = await f.req('/api/cards?limit=100', { token });
@@ -228,18 +257,19 @@ test('admin search/pagination reaches old rows beyond 500, and invalid paginatio
   for (const query of ['limit=-1', 'limit=1.5', 'offset=-2', 'status=unknown'])
     assert.equal((await f.req('/api/cards?' + query, { token })).status, 400);
 });
+
 test('JSON/client errors keep their HTTP status and health details remain private', async (t) => {
   const f = await fixture(t);
-  const malformed = await fetch(f.base + '/api/admin/login', {
+  const malformed = await fetch(f.base + '/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{',
   });
   assert.equal(malformed.status, 400);
-  const tooLarge = await fetch(f.base + '/api/admin/login', {
+  const tooLarge = await fetch(f.base + '/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ passcode: 'A'.repeat(600000) }),
+    body: JSON.stringify({ username: 'A'.repeat(600000) }),
   });
   assert.equal(tooLarge.status, 413);
   f.pool.query = async () => {
@@ -249,15 +279,7 @@ test('JSON/client errors keep their HTTP status and health details remain privat
   assert.equal(health.status, 503);
   assert.ok(!JSON.stringify(health.data).includes('private database'));
 });
-test('production configuration rejects equal, weak and placeholder credentials', () => {
-  assert.throws(() =>
-    validateProductionSecrets({ staffToken: STAFF, adminToken: STAFF, tokenSecret: SECRET })
-  );
-  assert.throws(() =>
-    validateProductionSecrets({ staffToken: 'short', adminToken: ADMIN, tokenSecret: SECRET })
-  );
-  validateProductionSecrets({ staffToken: STAFF, adminToken: ADMIN, tokenSecret: SECRET });
-});
+
 test('limiter memory is bounded and expired keys are removed; business timezone controls reset', () => {
   const limiter = new WindowLimiter(2, 1000, 2);
   assert.ok(limiter.consume('a', 100));

@@ -1,12 +1,9 @@
 /**
- * 冒烟测试：内存假库跑通全部路由与角色鉴权（无需 MySQL）
+ * 冒烟测试：内存假库跑通统一认证、名片路由与角色鉴权（无需 MySQL）
  * 运行：node test/smoke.mjs
  */
 import { createApp } from '../src/app.js';
-import { fakePool } from './fakePool.mjs';
-
-const ADMIN = 'admin-pass';
-const STAFF = 'staff-pass';
+import { fakePool, TEST_PASSWORDS } from './fakePool.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -21,7 +18,7 @@ function check(name, cond, extra = '') {
 }
 
 const pool = fakePool();
-const app = createApp({ pool, adminToken: ADMIN, staffToken: STAFF, dailyLimit: 5 });
+const app = createApp({ pool, dailyLimit: 5 });
 const server = app.listen(0);
 await new Promise((r) => server.once('listening', r));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -36,11 +33,11 @@ const okCard = {
   avatar: '',
 };
 
-async function login(passcode) {
-  const r = await fetch(`${base}/api/admin/login`, {
+async function login(username, password) {
+  const r = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ passcode }),
+    body: JSON.stringify({ username, password }),
   });
   return { status: r.status, body: await r.json().catch(() => null) };
 }
@@ -55,36 +52,48 @@ console.log('健康检查');
   check('GET /api/health 返回 200', r.status === 200);
 }
 
-console.log('登录换 token');
+console.log('统一账户登录');
 let staffToken = '';
 let adminToken = '';
+let staff2Token = '';
+let contractToken = '';
 {
-  const s = await login(STAFF);
+  const s = await login('staff', TEST_PASSWORDS.staff);
   staffToken = s.body?.token || '';
-  check('业务员口令登录成功', s.status === 200 && s.body?.role === 'staff');
-  check('返回 token 与过期时间', !!staffToken && typeof s.body?.exp === 'number');
+  check('业务员账号登录成功', s.status === 200 && s.body?.user?.role === 'staff');
+  check('返回 token 与用户信息', !!staffToken && s.body?.user?.username === 'staff');
 
-  const a = await login(ADMIN);
+  const a = await login('admin', TEST_PASSWORDS.admin);
   adminToken = a.body?.token || '';
-  check('管理员口令登录成功', a.status === 200 && a.body?.role === 'admin');
+  check('主管理员登录成功', a.status === 200 && a.body?.user?.role === 'admin');
 
-  const bad = await login('wrong-pass');
-  check('错误口令返回 401', bad.status === 401);
+  const c = await login('contract', TEST_PASSWORDS.contract);
+  contractToken = c.body?.token || '';
+  check('合同管理员登录成功', c.status === 200 && c.body?.user?.role === 'contract_admin');
 
-  const empty = await login('');
-  check('空口令返回 400', empty.status === 400);
+  const s2 = await login('staff2', TEST_PASSWORDS.staff2);
+  staff2Token = s2.body?.token || '';
 
-  const me = await fetch(`${base}/api/admin/me`, { headers: auth(staffToken) });
+  const bad = await login('staff', 'wrong-password');
+  check('错误密码返回 401', bad.status === 401);
+
+  const empty = await login('', '');
+  check('空账号密码返回 400', empty.status === 400);
+
+  const me = await fetch(`${base}/api/auth/me`, { headers: auth(staffToken) });
   const meJson = await me.json();
-  check('token 可查询当前身份', me.status === 200 && meJson.role === 'staff');
+  check('token 可查询当前身份', me.status === 200 && meJson.user?.username === 'staff');
 
-  const forged = await fetch(`${base}/api/admin/me`, {
+  const forged = await fetch(`${base}/api/auth/me`, {
     headers: auth(`${staffToken.slice(0, -2)}xx`),
   });
   check('被篡改的 token 返回 401', forged.status === 401);
+
+  const noAuth = await fetch(`${base}/api/cards`, { headers: { 'X-Card-Token': 'legacy' } });
+  check('旧口令头已彻底失效', noAuth.status === 401);
 }
 
-console.log('创建名片（角色）');
+console.log('创建名片（角色与配额）');
 let shortCode = '';
 {
   const r0 = await fetch(`${base}/api/cards`, {
@@ -108,22 +117,23 @@ let shortCode = '';
   });
   const j = await r2.json();
   shortCode = j.record?.shortCode || '';
-  check('业务员 token 创建成功', r2.status === 200 && j.ok === true);
+  check('业务员创建成功', r2.status === 200 && j.ok === true);
   check('短码 8 位合法字符', /^[a-hj-km-np-z2-9]{8}$/.test(shortCode), shortCode);
+  check('创建记录带归属用户', j.record?.ownerUserId === 2);
 
   const r3 = await fetch(`${base}/api/cards`, {
     method: 'POST',
-    headers: { ...auth(adminToken) },
+    headers: auth(adminToken),
     body: JSON.stringify({ ...okCard, name: '李经理', phone: '13805349999' }),
   });
-  check('管理员 token 也能创建', r3.status === 200);
+  check('管理员也能创建', r3.status === 200);
 
-  const legacy = await fetch(`${base}/api/cards`, {
+  const contractTry = await fetch(`${base}/api/cards`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Card-Token': STAFF },
-    body: JSON.stringify({ ...okCard, name: '王经理', phone: '13805348888' }),
+    headers: auth((await login('contract', TEST_PASSWORDS.contract)).body.token),
+    body: JSON.stringify({ ...okCard, name: '合同员', phone: '13805347777' }),
   });
-  check('旧版口令头已关闭', legacy.status === 401);
+  check('合同管理员无名片权限 403', contractTry.status === 403);
 }
 
 console.log('读取名片');
@@ -137,7 +147,7 @@ console.log('读取名片');
   check('不存在短码返回 404', r2.status === 404);
 }
 
-console.log('管理接口（仅管理员）');
+console.log('管理接口（权限）');
 {
   const s = await fetch(`${base}/api/cards`, { headers: auth(staffToken) });
   check('业务员不能看全量列表 403', s.status === 403, `got ${s.status}`);
@@ -174,26 +184,41 @@ console.log('管理接口（仅管理员）');
     body: JSON.stringify({ status: 'active' }),
   });
 
-  const otherStaff = await login(STAFF);
   const delStaff = await fetch(`${base}/api/cards/${shortCode}`, {
     method: 'DELETE',
-    headers: auth(otherStaff.body.token),
+    headers: auth(staff2Token),
   });
   check('业务员不能删除他人名片 403', delStaff.status === 403);
 
-  const del = await fetch(`${base}/api/cards/${shortCode}`, {
-    method: 'DELETE',
-    headers: auth(adminToken),
-  });
-  check('管理员删除成功', del.status === 200);
-
-  const gone = await fetch(`${base}/api/cards/${shortCode}`);
-  check('删除后 404', gone.status === 404);
+  const mine = await fetch(`${base}/api/cards/mine`, { headers: auth(staff2Token) });
+  const jm = await mine.json();
+  check('业务员只能看到本人名片', mine.status === 200 && jm.total === 0);
 }
 
-console.log('创建限流');
+console.log('归属改派');
 {
-  // 创建配额按恢复身份统计，当前 staff 已创建 1 张。
+  const assign = await fetch(`${base}/api/cards/${shortCode}/owner`, {
+    method: 'PUT',
+    headers: auth(adminToken),
+    body: JSON.stringify({ user_id: 3 }),
+  });
+  check('管理员改派归属成功', assign.status === 200);
+
+  const edit = await fetch(`${base}/api/cards/${shortCode}`, {
+    method: 'PUT',
+    headers: auth(staff2Token),
+    body: JSON.stringify({ ...okCard, title: '改派后的职位' }),
+  });
+  check('新归属人可编辑名片', edit.status === 200);
+
+  const mine = await fetch(`${base}/api/cards/mine`, { headers: auth(staff2Token) });
+  const jm = await mine.json();
+  check('改派后出现在新归属人列表', mine.status === 200 && jm.total === 1);
+}
+
+console.log('每日配额（按账号）');
+{
+  // 当前 staff 已创建 1 张，再建 4 张后达到上限
   for (let i = 0; i < 4; i++) {
     await fetch(`${base}/api/cards`, {
       method: 'POST',
@@ -207,6 +232,67 @@ console.log('创建限流');
     body: JSON.stringify({ ...okCard, name: '员工9', phone: '13900000009' }),
   });
   check('超出每日上限返回 429', over.status === 429, `got ${over.status}`);
+
+  const other = await fetch(`${base}/api/cards`, {
+    method: 'POST',
+    headers: auth(staff2Token),
+    body: JSON.stringify({ ...okCard, name: '另一个人', phone: '13900000088' }),
+  });
+  check('配额按账号独立统计', other.status === 200);
+}
+
+console.log('合同接口（统一后台挂载）');
+{
+  const list = await fetch(`${base}/api/contract/contracts?page=1&page_size=10`, {
+    headers: auth(adminToken),
+  });
+  const lj = await list.json().catch(() => null);
+  check('合同列表可访问', list.status === 200 && lj?.total === 0 && Array.isArray(lj?.contracts));
+
+  const staffList = await fetch(`${base}/api/contract/contracts`, { headers: auth(staff2Token) });
+  const sj = await staffList.json().catch(() => null);
+  check('业务员可读本人合同列表', staffList.status === 200 && Array.isArray(sj?.contracts));
+
+  const stats = await fetch(`${base}/api/contract/contracts/stats`, { headers: auth(adminToken) });
+  const stj = await stats.json().catch(() => null);
+  check(
+    '合同统计返回总览与分类',
+    stats.status === 200 && stj?.overview?.total === 0 && stj?.categories?.length === 3,
+    `got ${stats.status}`
+  );
+
+  const staffUsers = await fetch(`${base}/api/contract/users`, { headers: auth(staff2Token) });
+  check('业务员不能访问用户管理 403', staffUsers.status === 403);
+
+  const caCreate = await fetch(`${base}/api/contract/users`, {
+    method: 'POST',
+    headers: auth(contractToken),
+    body: JSON.stringify({ name: '新同事', username: 'newbie', password: 'newbie-pass-123', role: 'staff' }),
+  });
+  check('合同管理员不能新建账号 403', caCreate.status === 403);
+
+  const adminCreate = await fetch(`${base}/api/contract/users`, {
+    method: 'POST',
+    headers: auth(adminToken),
+    body: JSON.stringify({ name: '新同事', username: 'newbie', password: 'newbie-pass-123', role: 'staff' }),
+  });
+  check('主管理员可新建账号', adminCreate.status === 200, `got ${adminCreate.status}`);
+
+  const userList = await fetch(`${base}/api/contract/users`, { headers: auth(adminToken) });
+  const uj = await userList.json().catch(() => null);
+  check(
+    '账号列表包含新建账号（改派归属下拉可用）',
+    userList.status === 200 && uj?.users?.some((u) => u.username === 'newbie'),
+    `count=${uj?.users?.length}`
+  );
+}
+
+console.log('退出登录');
+{
+  const out = await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: auth(staffToken) });
+  check('退出成功', out.status === 200);
+  const me = await fetch(`${base}/api/auth/me`, { headers: auth(staffToken) });
+  check('退出后 token 失效', me.status === 401);
 }
 
 server.close();

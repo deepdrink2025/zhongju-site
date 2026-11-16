@@ -2,41 +2,25 @@ import crypto from 'node:crypto';
 
 export function fakeRepository() {
   const rows = [],
-    sessions = new Map(),
     usage = new Map();
   return {
     rows,
-    sessions,
     usage,
     async getCard(code) {
       return rows.find((row) => row.short_code === code) || null;
     },
-    async createSession(session) {
-      sessions.set(session.id, { ...session });
+    async quota(userId, day) {
+      return usage.get(userId + day) || 0;
     },
-    async sessionActive(id, now) {
-      const session = sessions.get(id);
-      return !!session && !session.revoked && session.exp > now;
-    },
-    async revokeSession(id) {
-      const session = sessions.get(id);
-      if (session) session.revoked = true;
-    },
-    async cleanupSessions(now) {
-      for (const [id, s] of sessions) if (s.exp <= now) sessions.delete(id);
-    },
-    async quota(owner, day) {
-      return usage.get(owner + day) || 0;
-    },
-    async createCard(data, { owner, day, limit, generateCode }) {
-      const key = owner + day,
+    async createCard(data, { userId, day, limit, generateCode }) {
+      const key = userId + day,
         used = usage.get(key) || 0;
       if (used >= limit) throw Object.assign(new Error('今日生成次数已达上限'), { status: 429 });
       const record = {
         ...data,
         id: crypto.randomBytes(8).toString('hex'),
         short_code: generateCode(),
-        owner_key: owner,
+        owner_user_id: userId,
       };
       rows.push(record);
       usage.set(key, used + 1);
@@ -61,15 +45,15 @@ export function fakeRepository() {
       rows.splice(index, 1);
       return true;
     },
-    async setOwner(code, owner) {
+    async setOwner(code, userId) {
       const row = rows.find((item) => item.short_code === code);
       if (!row) return false;
-      row.owner_key = owner;
+      row.owner_user_id = userId;
       row.updated_at = Date.now();
       return true;
     },
     async listCards({
-      owner,
+      userId,
       keyword = '',
       status = 'all',
       limit = 50,
@@ -78,7 +62,7 @@ export function fakeRepository() {
     }) {
       const all = rows.filter(
         (row) =>
-          (!owner || row.owner_key === owner) &&
+          (!userId || row.owner_user_id === userId) &&
           [row.name, row.phone, row.short_code, row.title, row.department].some((value) =>
             String(value || '')
               .toLowerCase()

@@ -29,7 +29,7 @@ def main():
             args.mysql_container=settings['DB_HOST']; args.shared_network=settings['SHARED_NETWORK']
             args.db_name=settings['DB_NAME']; args.db_user=settings['DB_USER']
             if not re.fullmatch(r'[a-f0-9]{40,}',settings['DB_PASSWORD']): raise ValueError('Unexpected saved password format')
-            for key in ['STAFF_TOKEN','ADMIN_TOKEN','TOKEN_SECRET']:
+            for key in ['INIT_ADMIN_USER','INIT_ADMIN_PASSWORD']:
                 if not settings.get(key): raise ValueError('Missing credentials')
         except (KeyError,ValueError): parser.error('Saved .env is not a bootstrap configuration; verify it manually')
         env_path.chmod(0o600)
@@ -51,7 +51,7 @@ def main():
     if not args.resume:
         existing=root_query(f"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{args.db_name}'; SELECT User FROM mysql.user WHERE User='{args.db_user}';")
         if existing: parser.error('Database or user exists; refusing to overwrite')
-        settings={'HTTP_PORT':str(args.http_port),'DB_HOST':args.mysql_container,'DB_PORT':str(args.db_port),'DB_USER':args.db_user,'DB_PASSWORD':secrets.token_hex(24),'DB_NAME':args.db_name,'SHARED_NETWORK':args.shared_network,'MYSQL_ROOT_PASSWORD':'','STAFF_TOKEN':secrets.token_hex(16),'ADMIN_TOKEN':secrets.token_hex(16),'TOKEN_SECRET':secrets.token_hex(32),'DAILY_LIMIT':'5','LOGIN_LIMIT':'10','QUOTA_TIME_ZONE':'Asia/Shanghai','TRUST_PROXY':'loopback,uniquelocal'}
+        settings={'HTTP_PORT':str(args.http_port),'DB_HOST':args.mysql_container,'DB_PORT':str(args.db_port),'DB_USER':args.db_user,'DB_PASSWORD':secrets.token_hex(24),'DB_NAME':args.db_name,'SHARED_NETWORK':args.shared_network,'MYSQL_ROOT_PASSWORD':'','INIT_ADMIN_USER':'admin','INIT_ADMIN_PASSWORD':secrets.token_hex(12),'INIT_ADMIN_NAME':'主管理员','TOKEN_EXPIRE_HOURS':'12','DAILY_LIMIT':'5','LOGIN_LIMIT':'10','QUOTA_TIME_ZONE':'Asia/Shanghai','TRUST_PROXY':'loopback,uniquelocal'}
         fd=os.open(env_path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
         with os.fdopen(fd,'w') as target: target.write(''.join(f'{key}={value}\n' for key,value in settings.items()))
     try:

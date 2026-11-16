@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api';
+import { api as apiRoot, contractApi as api } from '../api';
 import Modal from '../components/Modal';
 import { ROLE_LABELS, LOGIN_ROLES } from '../types';
 import type { LoginLogRow, Role, UserRow } from '../types';
-import { useAuth } from '../ContractsApp';
+import { useAuth } from '../auth';
 
 const ROLES: Role[] = ['admin', 'contract_admin', 'staff'];
 
@@ -12,7 +12,7 @@ function LoginLogsModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api<{ logs: LoginLogRow[] }>('/auth/login-logs')
+    apiRoot<{ logs: LoginLogRow[] }>('/auth/login-logs')
       .then((d) => setLogs(d.logs))
       .catch((e) => setError((e as Error).message));
   }, []);

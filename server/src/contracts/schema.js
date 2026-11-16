@@ -125,12 +125,10 @@ export async function ensureContractSchema(pool) {
     await pool.query("ALTER TABLE contracts ADD COLUMN invoice_type VARCHAR(20) NULL AFTER amount_unit");
   }
 
-  // 2. 存量库角色迁移（幂等）：admin=主管理员、contract_admin=合同管理员（均可登录）；
-  //    staff=业务人员档案（不登录、无密码）
+  // 2. 存量库角色兼容（幂等）：历史 finance/viewer 归入新角色；
+  //    统一账户后 staff 也可登录，不再清空业务人员密码
   await pool.query("ALTER TABLE users MODIFY role ENUM('admin','finance','staff','viewer','contract_admin') NOT NULL DEFAULT 'staff'");
   await pool.query("UPDATE users SET role = 'contract_admin' WHERE role = 'finance'");
   await pool.query("UPDATE users SET role = 'staff' WHERE role = 'viewer'");
-  await pool.query("UPDATE users SET salt = '', password_hash = '' WHERE role = 'staff' AND (password_hash != '' OR salt != '')");
-  await pool.query("DELETE FROM contract_sessions WHERE user_id IN (SELECT id FROM users WHERE role = 'staff')");
   await pool.query("ALTER TABLE users MODIFY role ENUM('admin','contract_admin','staff') NOT NULL DEFAULT 'staff'");
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useLocation, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
@@ -8,8 +8,8 @@ import Icon from '../components/Icon';
 import { findMember, type Member } from '../data/members';
 import { company, stats } from '../data/company';
 import { copyText } from '../utils/clipboard';
-import { encodeCard, isQrSafe, readCardFromHash, type CardData } from '../utils/cardCodec';
-import { cardUrlOfCode, fetchCardAsync, IS_SERVER_MODE, type CardRecord } from '../utils/cardStore';
+import { isQrSafe, type CardData } from '../utils/cardCodec';
+import { cardUrlOfCode, fetchCardAsync, type CardRecord } from '../utils/cardStore';
 import { generatePoster } from '../utils/poster';
 
 /** 名片页顶栏（返回官网） */
@@ -37,13 +37,11 @@ function CardTopBar() {
 
 /**
  * 业务人员电子名片页（明亮版）
- * - /card#d=xxx：旧版链接（名片数据内嵌在链接中），保持兼容
- * - /card/:shortCode：新版短链名片（本地存储；服务端阶段改读数据库）
+ * - /card/:shortCode：正式短链名片（读取服务端数据库）
  * - /card/:id（wang/li/zhang/liu）：示例名片
  */
 export default function CardPage() {
   const { id } = useParams<{ id: string }>();
-  const location = useLocation();
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
   const [introOpen, setIntroOpen] = useState(false);
@@ -51,15 +49,9 @@ export default function CardPage() {
   const [posterBusy, setPosterBusy] = useState(false);
   const qrWrapRef = useRef<HTMLDivElement>(null);
 
-  const hashCard: CardData | null = useMemo(
-    () => (IS_SERVER_MODE ? null : readCardFromHash()),
-    [location.hash]
-  );
-  const blockedLegacy = IS_SERVER_MODE && !id && /[#&]d=/.test(location.hash);
-  const canShare = IS_SERVER_MODE;
   const sample: Member | undefined = useMemo(() => findMember(id), [id]);
 
-  // 短码名片：本地模式读本机存储，服务端模式请求 API
+  // 短码名片：请求服务端数据库
   const [remote, setRemote] = useState<{
     status: 'loading' | 'active' | 'disabled' | 'notfound' | 'error';
     record?: CardRecord;
@@ -67,7 +59,7 @@ export default function CardPage() {
   }>({ status: 'loading' });
 
   useEffect(() => {
-    if (hashCard || sample || !id) return;
+    if (sample || !id) return;
     let alive = true;
     setRemote({ status: 'loading' });
     const refresh = () =>
@@ -91,22 +83,21 @@ export default function CardPage() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [id, hashCard, sample]);
+  }, [id, sample]);
 
   const record = remote.record ?? null;
   const member = useMemo<CardData | Member | null>(
-    () => hashCard ?? record ?? sample ?? null,
-    [hashCard, record, sample]
+    () => record ?? sample ?? null,
+    [record, sample]
   );
-  const isLoading = !!id && !hashCard && !sample && remote.status === 'loading';
-  const isSample = !hashCard && !record && !!sample;
-  const isDisabled = !hashCard && !sample && remote.status === 'disabled';
+  const isLoading = !!id && !sample && remote.status === 'loading';
+  const isSample = !record && !!sample;
+  const isDisabled = !sample && remote.status === 'disabled';
 
   const shareUrl = useMemo(() => {
-    if (hashCard) return `${window.location.origin}/card#d=${encodeCard(hashCard)}`;
     if (record) return cardUrlOfCode(record.shortCode);
     return `${window.location.origin}/card/${sample?.id ?? ''}`;
-  }, [hashCard, record, sample]);
+  }, [record, sample]);
 
   // 微信/浏览器默认分享卡片信息：动态设置页面标题与描述
   useEffect(() => {
@@ -153,7 +144,7 @@ export default function CardPage() {
   };
 
   const handlePoster = async () => {
-    if (!member || !canShare || !isQrSafe(shareUrl)) {
+    if (!member || !isQrSafe(shareUrl)) {
       showToast('此预览不支持分享图，请使用正式短链');
       return;
     }
@@ -239,9 +230,7 @@ export default function CardPage() {
         <Navbar />
         <main className="flex flex-1 items-center justify-center px-4 pt-16">
           <div className="rounded-2xl bg-white p-10 text-center shadow-card">
-            <p className="text-lg font-bold text-neutral-900">
-              {blockedLegacy ? '旧版名片链接已停用' : '未找到该名片'}
-            </p>
+            <p className="text-lg font-bold text-neutral-900">未找到该名片</p>
             <p className="mt-2 text-sm text-neutral-500">
               请联系业务经理获取由控制台生成的正式名片短链。
             </p>
@@ -297,11 +286,7 @@ export default function CardPage() {
                 )}
                 <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-lime/15 px-3 py-1 text-xs font-medium text-lime-600">
                   <span className="h-1.5 w-1.5 rounded-full bg-lime-500" />
-                  {!IS_SERVER_MODE
-                    ? '本地预览，非正式名片'
-                    : isSample
-                      ? '示例名片'
-                      : '您的专属业务经理'}
+                  {isSample ? '示例名片' : '您的专属业务经理'}
                 </p>
               </div>
 
@@ -336,11 +321,10 @@ export default function CardPage() {
                   <button
                     type="button"
                     onClick={() => setShareOpen(true)}
-                    disabled={!canShare}
                     className="flex items-center justify-center gap-2 rounded-full bg-neutral-100 px-4 py-3 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-200"
                   >
                     <Icon name="share" className="h-4 w-4" />
-                    {canShare ? '分享名片' : '仅本地预览'}
+                    分享名片
                   </button>
                 </div>
               </div>
@@ -379,11 +363,7 @@ export default function CardPage() {
 
               {/* 二维码（链接过长时降级为复制链接提示） */}
               <div className="mt-6 flex flex-col items-center rounded-2xl bg-neutral-50 p-5">
-                {!canShare ? (
-                  <p className="text-xs text-neutral-500">
-                    本地预览不能跨设备分享，请启用服务端后生成正式名片。
-                  </p>
-                ) : isQrSafe(shareUrl) ? (
+                {isQrSafe(shareUrl) ? (
                   <>
                     <div className="rounded-xl bg-white p-2.5 shadow-card">
                       <QRCodeSVG value={shareUrl} size={110} fgColor="#171717" bgColor="#ffffff" />
@@ -559,7 +539,7 @@ export default function CardPage() {
       )}
 
       {/* 隐藏二维码 canvas（供分享海报绘制） */}
-      {canShare && isQrSafe(shareUrl) && (
+      {isQrSafe(shareUrl) && (
         <div ref={qrWrapRef} className="pointer-events-none fixed -left-[9999px] top-0" aria-hidden>
           <QRCodeCanvas value={shareUrl} size={440} fgColor="#171717" bgColor="#ffffff" />
         </div>

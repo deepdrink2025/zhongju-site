@@ -2,8 +2,8 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { ROLE_LABELS, LOGIN_ROLES } from '../types';
-import { useAuth } from '../ContractsApp';
+import { ROLE_LABELS } from '../types';
+import { useAuth } from '../auth';
 import Modal from './Modal';
 
 function ChangePasswordModal({ onClose }: { onClose: () => void }) {
@@ -55,21 +55,24 @@ export default function Layout({ children }: { children: ReactNode }) {
   const [showPw, setShowPw] = useState(false);
   if (!user) return null;
 
+  const canCards = user.role === 'staff' || user.role === 'admin';
+  const canUsers = user.role === 'admin' || user.role === 'contract_admin';
+
   async function logout() {
     try {
       await api('/auth/logout', { method: 'POST' });
     } catch {
-      /* 忽略 */
+      /* 忽略：即便请求失败也清掉本地登录态 */
     }
     setUser(null);
-    navigate('/contracts/login');
+    navigate('/admin/login');
   }
 
-  const link = (to: string, label: string) => (
+  const link = (to: string, label: string, end = false) => (
     <NavLink
       key={to}
       to={to}
-      end={to === '/contracts'}
+      end={end}
       className={({ isActive }) =>
         `rounded-lg px-3 py-1.5 text-sm font-medium ${isActive ? 'bg-ct-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`
       }
@@ -79,15 +82,17 @@ export default function Layout({ children }: { children: ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-slate-100">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-4 py-3">
-          <Link to="/contracts" className="text-base font-bold text-ct-700">
-            中聚人力 · 合同管理
+          <Link to="/admin" className="text-base font-bold text-ct-700">
+            中聚人力 · 内部管理后台
           </Link>
           <nav className="flex items-center gap-1">
-            {link('/contracts', '合同台账')}
-            {LOGIN_ROLES.includes(user.role) && link('/contracts/users', '用户与业务人员')}
+            {link('/admin', '工作台', true)}
+            {canCards && link('/admin/cards', '名片管理')}
+            {link('/admin/contracts', '合同管理')}
+            {canUsers && link('/admin/users', '用户管理')}
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
             <span className="text-slate-500">

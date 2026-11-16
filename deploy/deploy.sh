@@ -16,7 +16,8 @@
 #   4. 填了 MYSQL_ROOT_PASSWORD 就自动在 mysql-common 里建库、建用户并授权
 #   5. docker compose up -d --build（web + api 一起）
 #   6. 轮询 /api/health，等接口起来（失败则给出看日志的命令）
-#   7. 打印访问地址与业务员/管理员口令
+#   7. 幂等创建首个主管理员账号（已完成则跳过），并迁移存量名片归属
+#   8. 打印访问地址与后台入口
 
 set -euo pipefail
 
@@ -89,9 +90,9 @@ load_env() {
   DB_NAME="$(get_env DB_NAME)";          DB_NAME="${DB_NAME:-zhongju_cards}"
   SHARED_NETWORK="$(get_env SHARED_NETWORK)"; SHARED_NETWORK="${SHARED_NETWORK:-bridge-network}"
   MYSQL_ROOT_PASSWORD="$(get_env MYSQL_ROOT_PASSWORD)"
-  STAFF_TOKEN="$(get_env STAFF_TOKEN)"
-  ADMIN_TOKEN="$(get_env ADMIN_TOKEN)"
-  TOKEN_SECRET="$(get_env TOKEN_SECRET)"
+  INIT_ADMIN_USER="$(get_env INIT_ADMIN_USER)";         INIT_ADMIN_USER="${INIT_ADMIN_USER:-admin}"
+  INIT_ADMIN_PASSWORD="$(get_env INIT_ADMIN_PASSWORD)"
+  INIT_ADMIN_NAME="$(get_env INIT_ADMIN_NAME)";         INIT_ADMIN_NAME="${INIT_ADMIN_NAME:-主管理员}"
 }
 
 wait_http() { # wait_http URL 秒数
@@ -128,18 +129,12 @@ do_deploy() {
   if is_placeholder "$DB_PASSWORD"; then
     DB_PASSWORD="$(rand_secret 20)"; set_env DB_PASSWORD "$DB_PASSWORD"; changed=1
   fi
-  if is_placeholder "$STAFF_TOKEN"; then
-    STAFF_TOKEN="$(rand_secret 32)"; set_env STAFF_TOKEN "$STAFF_TOKEN"; changed=1
+  if is_placeholder "$INIT_ADMIN_PASSWORD"; then
+    INIT_ADMIN_PASSWORD="$(rand_secret 20)"; set_env INIT_ADMIN_PASSWORD "$INIT_ADMIN_PASSWORD"; changed=1
   fi
-  if is_placeholder "$ADMIN_TOKEN"; then
-    ADMIN_TOKEN="$(rand_secret 32)"; set_env ADMIN_TOKEN "$ADMIN_TOKEN"; changed=1
-  fi
-  if [ -z "$TOKEN_SECRET" ]; then
-    TOKEN_SECRET="$(rand_secret 32)"; set_env TOKEN_SECRET "$TOKEN_SECRET"; changed=1
-  fi
-  [ "$changed" = 1 ] && ok "已把口令/密钥的占位符替换为随机强密码（见 deploy/.env）"
-  [ "$STAFF_TOKEN" != "$ADMIN_TOKEN" ] || die "业务员口令与管理员口令必须不同"
-  [ "${#STAFF_TOKEN}" -ge 16 ] && [ "${#ADMIN_TOKEN}" -ge 16 ] && [ "${#TOKEN_SECRET}" -ge 32 ] || die "口令至少 16 位，TOKEN_SECRET 至少 32 位"
+  [ "$changed" = 1 ] && ok "已把密码占位符替换为随机强密码（见 deploy/.env）"
+  [[ "$INIT_ADMIN_USER" =~ ^[a-zA-Z0-9_-]{3,30}$ ]] || die "INIT_ADMIN_USER 需为 3-30 位字母、数字、中划线或下划线"
+  [ "${#INIT_ADMIN_PASSWORD}" -ge 8 ] || die "INIT_ADMIN_PASSWORD 至少 8 位"
 
   # ---- 3. 网络 ----
   if docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1; then
@@ -208,16 +203,31 @@ SQL
     die "健康检查失败，部署未就绪"
   fi
 
-  # ---- 7. 汇总 ----
+  # ---- 7. 首个主管理员（幂等） ----
+  info "初始化主管理员账号（已存在则跳过）"
+  if "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" \
+      exec -T \
+      -e INIT_ADMIN_USER="$INIT_ADMIN_USER" \
+      -e INIT_ADMIN_PASSWORD="$INIT_ADMIN_PASSWORD" \
+      -e INIT_ADMIN_NAME="$INIT_ADMIN_NAME" \
+      api node sql/init-admin.mjs; then
+    ok "主管理员就绪：$INIT_ADMIN_USER"
+  else
+    warn "主管理员初始化失败，请手动执行："
+    printf '        %s exec -T api node sql/init-admin.mjs\n' "${DC[*]}"
+  fi
+
+  # ---- 8. 汇总 ----
   echo
   printf '%s================ 部署完成 ================%s\n' "$C_B" "$C_0"
   printf '  官网首页      %s/\n' "$base"
-  printf '  名片控制台    %s/admin\n' "$base"
+  printf '  管理后台      %s/admin（登录名 %s）\n' "$base" "$INIT_ADMIN_USER"
   printf '  健康检查      %s/api/health\n' "$base"
   printf '  公网入口      Nginx Proxy Manager → http://zhongju-site-web:80\n'
   printf '  域名与证书    在 Nginx Proxy Manager 面板中配置\n'
   echo
-  printf '  登录口令保存在 %s（权限应为 0600）；修改后重新部署生效\n' "$ENV_FILE"
+  printf '  管理员密码保存在 %s 的 INIT_ADMIN_PASSWORD（权限应为 0600）\n' "$ENV_FILE"
+  printf '  首次登录后建议在后台「修改密码」里改掉，再从 .env 删除该变量\n'
   echo
   printf '  常用命令：./deploy.sh ps | logs | restart | down\n'
   printf '%s==========================================%s\n' "$C_B" "$C_0"

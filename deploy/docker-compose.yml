@@ -13,9 +13,6 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME:-zhongju_cards}
-      STAFF_TOKEN: ${STAFF_TOKEN}
-      ADMIN_TOKEN: ${ADMIN_TOKEN}
-      TOKEN_SECRET: ${TOKEN_SECRET:-}
       DAILY_LIMIT: ${DAILY_LIMIT:-5}
       LOGIN_LIMIT: ${LOGIN_LIMIT:-10}
       TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
@@ -42,7 +39,6 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.web
       args:
-        VITE_CARD_SERVER: "on"
         VITE_CARD_API_BASE: ""
     container_name: zhongju-site-web
     restart: unless-stopped

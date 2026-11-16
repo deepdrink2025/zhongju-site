@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { pool, ensureSchema } from '../src/db.js';
+import { pool, ensureSchema, migrateCardOwnership } from '../src/db.js';
 import { createApp } from '../src/app.js';
+import { hashPassword } from '../src/contracts/util.js';
 
 if (
   process.env.RUN_MYSQL_INTEGRATION !== '1' ||
@@ -9,30 +10,39 @@ if (
   throw new Error(
     'Integration tests require an explicitly enabled, isolated zhongju_test_<random> database'
   );
-const STAFF = 'integration-staff-passcode',
-  ADMIN = 'integration-admin-passcode',
-  SECRET = 'integration-signing-key-12345678901234567890';
 let server;
 try {
-  // Start with the pre-upgrade schema to verify the additive migration.
+  // 1. 模拟升级前的旧表（无 owner_user_id、无 users 表）
   await pool.query(
-    `CREATE TABLE cards (id VARCHAR(32) PRIMARY KEY, short_code VARCHAR(8) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, title VARCHAR(64) NOT NULL DEFAULT '', department VARCHAR(64) NOT NULL DEFAULT '', phone VARCHAR(16) NOT NULL, wechat VARCHAR(64) NOT NULL DEFAULT '', bio VARCHAR(128) NOT NULL DEFAULT '', avatar MEDIUMTEXT NULL, status ENUM('active','disabled') NOT NULL DEFAULT 'active', created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+    `CREATE TABLE cards (id VARCHAR(32) PRIMARY KEY, short_code VARCHAR(8) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, title VARCHAR(64) NOT NULL DEFAULT '', department VARCHAR(64) NOT NULL DEFAULT '', phone VARCHAR(16) NOT NULL, wechat VARCHAR(64) NOT NULL DEFAULT '', bio VARCHAR(128) NOT NULL DEFAULT '', avatar MEDIUMTEXT NULL, status ENUM('active','disabled') NOT NULL DEFAULT 'active', created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, owner_key CHAR(64) NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
   await pool.query(
     'INSERT INTO cards (id,short_code,name,phone,created_at,updated_at) VALUES (?,?,?,?,?,?)',
     ['history', 'abcd2345', '历史测试名片', '13800000000', 1, 1]
   );
   await ensureSchema();
-  const [old] = await pool.query('SELECT name,owner_key FROM cards WHERE id=?', ['history']);
+
+  // 2. 创建统一账户（主管理员 + 两名业务员）
+  const accounts = [
+    ['主管理员', 'admin', 'admin', 'integration-admin-pass'],
+    ['业务员甲', 'staff', 'staff', 'integration-staff-pass'],
+    ['业务员乙', 'staff2', 'staff', 'integration-staff2-pass'],
+  ];
+  for (const [name, username, role, password] of accounts) {
+    const { salt, hash } = hashPassword(password);
+    await pool.query(
+      'INSERT INTO users (name, username, role, salt, password_hash) VALUES (?, ?, ?, ?, ?)',
+      [name, username, role, salt, hash]
+    );
+  }
+
+  // 3. 存量名片归属迁移：无归属 → 主管理员
+  assert.equal(await migrateCardOwnership(), 1);
+  const [old] = await pool.query('SELECT name, owner_user_id FROM cards WHERE id=?', ['history']);
   assert.equal(old[0].name, '历史测试名片');
-  assert.equal(old[0].owner_key, null);
-  const app = createApp({
-    pool,
-    staffToken: STAFF,
-    adminToken: ADMIN,
-    tokenSecret: SECRET,
-    dailyLimit: 2,
-  });
+  assert.equal(Number(old[0].owner_user_id), 1);
+
+  const app = createApp({ pool, dailyLimit: 2 });
   server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -47,12 +57,13 @@ try {
     });
     return { status: response.status, data: await response.json() };
   };
-  const login = async (deviceId, passcode = STAFF) =>
-    (await req('/api/admin/login', { method: 'POST', body: { passcode, deviceId } })).data.token;
-  const a = await login('a'.repeat(32)),
-    b = await login('b'.repeat(32)),
-    admin = await login('c'.repeat(32), ADMIN);
+  const login = async (username, password) =>
+    (await req('/api/auth/login', { method: 'POST', body: { username, password } })).data.token;
+  const a = await login('staff', 'integration-staff-pass');
+  const b = await login('staff2', 'integration-staff2-pass');
+  const admin = await login('admin', 'integration-admin-pass');
   assert.ok(a && b && admin);
+
   const card = {
     name: '集成测试',
     phone: '13800000000',
@@ -77,6 +88,7 @@ try {
   });
   assert.equal(edited.status, 200);
   assert.equal(edited.data.record.shortCode, code);
+
   const seed = [];
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
   for (let i = 0; i < 501; i++) {
@@ -86,30 +98,27 @@ try {
       s = alphabet[n % alphabet.length] + s;
       n = Math.floor(n / alphabet.length);
     }
-    seed.push([
-      'seed' + i,
-      'zz' + s,
-      i === 0 ? 'literal%_=' : '分页名片',
-      '13800000000',
-      i + 10,
-      i + 10,
-    ]);
+    seed.push(['seed' + i, 'zz' + s, i === 0 ? 'literal%_=' : '分页名片', '13800000000', i + 10, i + 10, 1]);
   }
-  await pool.query('INSERT INTO cards (id,short_code,name,phone,created_at,updated_at) VALUES ?', [
-    seed,
-  ]);
+  await pool.query(
+    'INSERT INTO cards (id,short_code,name,phone,created_at,updated_at,owner_user_id) VALUES ?',
+    [seed]
+  );
   const last = await req('/api/cards?limit=100&offset=500', { token: admin });
   assert.equal(last.status, 200);
-  assert.equal(last.data.total, 505);
-  assert.equal(last.data.items.length, 5);
+  assert.equal(last.data.total, 504);
+  assert.equal(last.data.items.length, 4);
   const escaped = await req('/api/cards?q=' + encodeURIComponent('literal%_='), { token: admin });
   assert.equal(escaped.status, 200);
   assert.equal(escaped.data.total, 1);
+
+  // 归属改派：历史名片 → 业务员甲
+  const [staffA] = await pool.query("SELECT id FROM users WHERE username='staff'");
   assert.equal(
     (
       await req('/api/cards/abcd2345/owner', {
         method: 'PUT',
-        body: { deviceId: 'a'.repeat(32) },
+        body: { user_id: staffA[0].id },
         token: b,
       })
     ).status,
@@ -119,19 +128,18 @@ try {
     (
       await req('/api/cards/abcd2345/owner', {
         method: 'PUT',
-        body: { deviceId: 'a'.repeat(32) },
+        body: { user_id: staffA[0].id },
         token: admin,
       })
     ).status,
     200
   );
-  const restored = await login('a'.repeat(32));
-  const mine = await req('/api/cards/mine', { token: restored });
+  const mine = await req('/api/cards/mine', { token: a });
   assert.equal(mine.data.total, 3);
-  await req('/api/admin/logout', { method: 'POST', token: restored });
-  assert.equal((await req('/api/admin/me', { token: restored })).status, 401);
+  await req('/api/auth/logout', { method: 'POST', token: a });
+  assert.equal((await req('/api/auth/me', { token: a })).status, 401);
   console.log(
-    'PASS real MySQL: legacy migration preserves rows; concurrent quota is atomic; ownership, update, session revocation, escaped search and pagination work'
+    'PASS real MySQL: unified accounts, legacy card migration, concurrent quota, ownership reassignment, session revocation, escaped search and pagination work'
   );
 } finally {
   if (server) await new Promise((resolve) => server.close(resolve));

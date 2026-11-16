@@ -8,6 +8,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY src ./src
+# 初始化脚本（首个主管理员、归属迁移）；deploy.sh 通过 exec 调用
+COPY sql ./sql
 
 ENV NODE_ENV=production \
     PORT=8787

@@ -32,51 +32,55 @@ def request(path, method='GET', body=None, token=None):
     except HTTPError as err:
         return err.code, json.load(err), err.headers
 
-for path in ['/', '/admin', '/card/wang', '/create']:
+# 1. 静态站与 SPA 路由回退（官网、后台、公开名片页）
+for path in ['/', '/admin', '/admin/login', '/admin/contracts', '/card/wang']:
     status, html, _ = request(path)
     assert status == 200 and '<div id="root"></div>' in html, path
-print('PASS homepage and SPA route fallback (4 routes)')
+print('PASS homepage and SPA route fallback (5 routes)')
+
 for path in re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html):
     status, _, headers = request(path)
     assert status == 200 and 'immutable' in headers.get('Cache-Control', ''), path
 print('PASS built assets and cache headers')
+
+# 2. 服务健康
 assert request('/api/health')[1]['ok']
 assert request('/api/contract/health')[1]['ok']
-assert request('/api/cards')[0] == 401
-assert request('/api/admin/login', 'POST', {'passcode': 'invalid-deployment-test'})[0] == 401
-assert request('/api/contract/contracts')[0] == 401
-assert request('/api/contract/auth/login', 'POST', {'username': 'deployment-test', 'password': 'wrong'})[0] == 401
 
-tokens = {}
-for role, key in [('staff', 'STAFF_TOKEN'), ('admin', 'ADMIN_TOKEN')]:
-    status, result, _ = request('/api/admin/login', 'POST', {'passcode': env[key]})
-    assert status == 200 and result['role'] == role
-    tokens[role] = result['token']
-    assert request('/api/admin/me', token=tokens[role])[1]['role'] == role
-assert request('/api/cards', token=tokens['staff'])[0] == 403
-print('PASS database health (cards + contracts), both login roles, and authorization')
+# 3. 未登录一律 401（统一账户体系下不再有口令入口）
+for path in ['/api/cards', '/api/quota', '/api/auth/me', '/api/contract/contracts', '/api/contract/users']:
+    assert request(path)[0] == 401, path
+assert request('/api/auth/login', 'POST', {'username': 'deployment-test', 'password': 'wrong-password'})[0] == 401
+assert request('/api/cards', token='forged-token')[0] == 401
+print('PASS unauthenticated and invalid-token requests rejected')
 
-# 合同管理模块：页面路由与登录页
-status, html, _ = request('/contracts')
-assert status == 200 and '<div id="root"></div>' in html
-print('PASS /contracts SPA route fallback')
+# 4. 主管理员登录（凭 deploy/.env 的 INIT_ADMIN_*）
+username = env.get('INIT_ADMIN_USER', 'admin')
+password = env.get('INIT_ADMIN_PASSWORD')
+assert password, 'Missing INIT_ADMIN_PASSWORD in deploy/.env'
+status, result, _ = request('/api/auth/login', 'POST', {'username': username, 'password': password})
+assert status == 200 and result['user']['role'] == 'admin', result
+token = result['token']
+assert request('/api/auth/me', token=token)[1]['user']['username'] == username
+assert request('/api/contract/users', token=token)[0] == 200
+print('PASS unified login, session check, and admin-only user management')
 
+# 5. 名片生命周期
 code = None
 try:
-    status, result, _ = request('/api/cards', 'POST', {'name': '部署验证', 'title': '临时测试', 'phone': '13800000000'}, tokens['staff'])
-    assert status == 200 and result['ok']
+    status, result, _ = request('/api/cards', 'POST', {'name': '部署验证', 'title': '临时测试', 'phone': '13800000000'}, token)
+    assert status == 200 and result['ok'], result
     code = result['record']['shortCode']
     assert request(f'/api/cards/{code}')[1]['record']['name'] == '部署验证'
-    status, result, _ = request('/api/cards', token=tokens['admin'])
+    status, result, _ = request('/api/cards', token=token)
     assert status == 200 and any(card['shortCode'] == code for card in result['items'])
-    assert request(f'/api/cards/{code}/status', 'PATCH', {'status': 'disabled'}, tokens['staff'])[0] == 403
-    assert request(f'/api/cards/{code}/status', 'PATCH', {'status': 'disabled'}, tokens['admin'])[0] == 200
+    assert request(f'/api/cards/{code}/status', 'PATCH', {'status': 'disabled'}, token)[0] == 200
     assert request(f'/api/cards/{code}')[1]['status'] == 'disabled'
-    assert request(f'/api/cards/{code}/status', 'PATCH', {'status': 'active'}, tokens['admin'])[0] == 200
+    assert request(f'/api/cards/{code}/status', 'PATCH', {'status': 'active'}, token)[0] == 200
     assert request(f'/api/cards/{code}')[1]['status'] == 'active'
     print('PASS real MySQL create/read/list/disable/enable card lifecycle')
 finally:
     if code:
-        assert request(f'/api/cards/{code}', 'DELETE', token=tokens['admin'])[0] == 200
+        assert request(f'/api/cards/{code}', 'DELETE', token=token)[0] == 200
         assert request(f'/api/cards/{code}')[0] == 404
         print('PASS test card deleted; no test card retained')

@@ -9,11 +9,9 @@ RUN npm ci --no-audit --no-fund
 
 COPY . .
 
-# 服务端模式（/api 同域反代，故 API 基地址留空）
-ARG VITE_CARD_SERVER=on
+# 同域部署（/api 由 Nginx 反代），API 基地址留空
 ARG VITE_CARD_API_BASE=
-ENV VITE_CARD_SERVER=$VITE_CARD_SERVER \
-    VITE_CARD_API_BASE=$VITE_CARD_API_BASE
+ENV VITE_CARD_API_BASE=$VITE_CARD_API_BASE
 
 RUN npm run build
 

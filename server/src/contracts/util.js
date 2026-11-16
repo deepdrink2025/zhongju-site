@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 
-// 可登录角色：主管理员 / 合同管理员；staff 为业务人员档案（不登录，仅作为合同负责人）
+// 统一账户：三种角色均可登录（staff 同时是合同负责人档案）
 export const ROLES = ['admin', 'contract_admin', 'staff'];
-export const LOGIN_ROLES = ['admin', 'contract_admin'];
-export const ROLE_LABELS = { admin: '主管理员', contract_admin: '合同管理员', staff: '业务人员（不登录）' };
+export const LOGIN_ROLES = ROLES;
+export const ROLE_LABELS = { admin: '主管理员', contract_admin: '合同管理员', staff: '业务员' };
 export const CONTRACT_TYPES = [
   '劳务派遣',
   '劳务外包',

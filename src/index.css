@@ -105,11 +105,6 @@ section[id] {
 }
 
 /*
- * 合同模块挂载期间（ContractsApp 动态加/删 .ct-body）沿用原独立版底色：
- * 浅灰底 + 白卡片，才能看出卡片层次。
- * 必须写在 @layer 之外——官网 body 的白底规则未分层，分层规则压不过它，
- * 这里靠 body.ct-body 的更高特异性取胜。
+ * 后台（/admin/*）底色由 src/admin/components/Layout.tsx 的 bg-slate-100 提供，
+ * 官网与名片页仍为白底，互不影响。
  */
-body.ct-body {
-  @apply bg-slate-100 text-slate-800;
-}

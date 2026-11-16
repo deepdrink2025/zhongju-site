@@ -1,6 +1,11 @@
 /**
- * 数据库连接池 + 建表
+ * 数据库连接池 + 建表 + 迁移
  * 生产环境连接 mysql-common 容器（桥接网络内按容器名访问）
+ *
+ * 统一账户体系：
+ * - users 表（contracts/schema.js 创建）是唯一账号源
+ * - cards.owner_user_id 指向 users.id
+ * - 配额按 user_id 统计；旧 card_sessions 表废弃
  */
 import mysql from 'mysql2/promise';
 import { ensureContractSchema } from './contracts/schema.js';
@@ -24,7 +29,15 @@ export const pool = mysql.createPool({
   timezone: 'Z',
 });
 
-/** 建表（幂等，启动时执行） */
+async function columnExists(table, column) {
+  const [rows] = await pool.query(
+    'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [table, column]
+  );
+  return rows.length > 0;
+}
+
+/** 建表与迁移（幂等，启动时执行） */
 export async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cards (
@@ -40,30 +53,54 @@ export async function ensureSchema() {
       status      ENUM('active','disabled') NOT NULL DEFAULT 'active',
       created_at  BIGINT       NOT NULL,
       updated_at  BIGINT       NOT NULL,
-      owner_key   CHAR(64)     NULL,
+      owner_user_id INT        NULL,
       INDEX idx_phone (phone),
       INDEX idx_created (created_at),
-      INDEX idx_owner_created (owner_key, created_at)
+      INDEX idx_owner_user (owner_user_id, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
-  const [columns] = await pool.query(
-    "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cards' AND COLUMN_NAME = 'owner_key'"
-  );
-  if (!columns.length)
-    await pool.query(
-      'ALTER TABLE cards ADD COLUMN owner_key CHAR(64) NULL, ADD INDEX idx_owner_created (owner_key, created_at)'
-    );
-  await pool.query(`CREATE TABLE IF NOT EXISTS card_sessions (
-    id CHAR(32) NOT NULL PRIMARY KEY, role VARCHAR(8) NOT NULL, owner_key CHAR(64) NOT NULL,
-    expires_at BIGINT NOT NULL, revoked_at BIGINT NULL, INDEX idx_expiry (expires_at)
-  ) ENGINE=InnoDB`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS card_daily_usage (
-    owner_key CHAR(64) NOT NULL, day_key CHAR(10) NOT NULL, used INT UNSIGNED NOT NULL DEFAULT 0,
-    PRIMARY KEY (owner_key, day_key), INDEX idx_day (day_key)
-  ) ENGINE=InnoDB`);
 
-  // 合同管理模块的表（与名片表共存于同一库）
+  // 账号表与合同表（users 必须先存在，后面的归属迁移依赖它）
   await ensureContractSchema(pool);
+
+  // 存量库补列：cards.owner_user_id
+  if (!(await columnExists('cards', 'owner_user_id'))) {
+    await pool.query(
+      'ALTER TABLE cards ADD COLUMN owner_user_id INT NULL, ADD INDEX idx_owner_user (owner_user_id, created_at)'
+    );
+  }
+
+  // 旧表清理：口令会话表、按设备统计的配额表
+  await pool.query('DROP TABLE IF EXISTS card_sessions');
+  if (await columnExists('card_daily_usage', 'owner_key')) {
+    await pool.query('DROP TABLE IF EXISTS card_daily_usage');
+  }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS card_daily_usage (
+      user_id  INT UNSIGNED NOT NULL,
+      day_key  CHAR(10) NOT NULL,
+      used     INT UNSIGNED NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, day_key),
+      INDEX idx_day (day_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await migrateCardOwnership();
+}
+
+/**
+ * 存量名片归属：统一归入首个主管理员（幂等；没有主管理员时跳过，由 init-admin 调用）
+ * 返回本次归属的名片数量。
+ */
+export async function migrateCardOwnership() {
+  const [admins] = await pool.query(
+    "SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id LIMIT 1"
+  );
+  if (!admins.length) return 0;
+  const [result] = await pool.query('UPDATE cards SET owner_user_id = ? WHERE owner_user_id IS NULL', [
+    admins[0].id,
+  ]);
+  return result.affectedRows || 0;
 }
 
 /** 启动自检：连不上库时给出清晰错误，避免容器静默重启 */

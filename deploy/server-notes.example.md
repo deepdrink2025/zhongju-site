@@ -20,7 +20,7 @@ python3 bootstrap.py --shared-network bridge-network --http-port 8080
 ./deploy.sh
 ```
 
-初始化脚本使用 MySQL 容器中的 root 环境配置建立独立数据库和用户，并将随机口令写入权限为 `0600` 的 `.env`。已有配置、数据库或同名用户时会停止；可用 `python3 bootstrap.py --help` 查看其他参数。
+初始化脚本使用 MySQL 容器中的 root 环境配置建立独立数据库和用户，并将随机数据库密码与随机主管理员密码写入权限为 `0600` 的 `.env`。已有配置、数据库或同名用户时会停止；可用 `python3 bootstrap.py --help` 查看其他参数。
 
 初始化中断后保留 `.env`，使用 `python3 bootstrap.py --resume` 继续；脚本验证已有用户密码后再授权，不会自动替换已有用户的密码。
 
@@ -30,11 +30,13 @@ Nginx Proxy Manager → `zhongju-site-web:80` → `zhongju-card-api:8787` → My
 
 在 NPM 中将自己的域名转发到 `http://zhongju-site-web:80`，Advanced 配置为 `client_max_body_size 4m;`。证书、强制 HTTPS 和续期在面板中管理。实际 Proxy Host ID 和管理面板地址仅填写到本地副本。
 
-## 口令与维护
+## 账号与维护
 
-业务员口令、管理员口令、数据库密码和 token 签名密钥存放在服务器的 `deploy/.env` 中。业务员与管理员口令必须不同且至少 16 位，签名密钥至少 32 位。口令变更后运行 `docker compose up -d`；变更某角色口令会撤销该角色旧 token，修改 `TOKEN_SECRET` 会使全部旧 token 失效。
+后台只有一个入口 `/admin`，账号存在数据库 `users` 表里，三种角色（主管理员 / 合同管理员 / 业务员）均可登录。首个主管理员由 `deploy.sh` 用 `.env` 的 `INIT_ADMIN_USER` / `INIT_ADMIN_PASSWORD` 幂等创建（也可手动执行 `docker compose exec -T api node sql/init-admin.mjs`）。
 
-升级前备份数据库；首次启动会新增归属字段、会话表和配额表。历史名片保持原短码，由管理员按本人提供的恢复码分配归属。详见 `docs/security-fixes.md`。
+建议首次登录后在后台「修改密码」改掉初始密码，再从 `deploy/.env` 删除 `INIT_ADMIN_PASSWORD`；数据库密码仍需保留。其余账号在「用户管理」里维护，停用账号即刻无法登录。
+
+升级前备份数据库；首次启动会新增 `cards.owner_user_id`、删除旧 `card_sessions`、重建按账号统计的配额表，并把存量无归属名片迁到首个主管理员。历史名片保持原短码，归属可在「全部名片 → 改派归属」调整。详见 `docs/security-fixes.md`。
 
 ```bash
 cd deploy
