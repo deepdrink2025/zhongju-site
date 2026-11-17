@@ -1,7 +1,7 @@
-export type Role = 'admin' | 'contract_admin' | 'staff';
+export type Role = 'admin' | 'contract_admin';
 
-/** 三种角色均可登录统一后台，可见菜单按角色收敛 */
-export const LOGIN_ROLES: Role[] = ['admin', 'contract_admin', 'staff'];
+/** 两种登录角色均可进入统一后台；业务员（合同业务负责人）档案在 contract_owners 表，不属于账号体系 */
+export const LOGIN_ROLES: Role[] = ['admin', 'contract_admin'];
 
 export interface AuthUser {
   id: number;
@@ -13,6 +13,12 @@ export interface AuthUser {
 export interface UserRow extends AuthUser {
   status: string;
   created_at: string;
+}
+
+/** 合同业务负责人（contract_owners 档案） */
+export interface Owner {
+  id: number;
+  name: string;
 }
 
 export interface Customer {
@@ -142,7 +148,6 @@ export interface StatsResponse {
 export const ROLE_LABELS: Record<Role, string> = {
   admin: '主管理员',
   contract_admin: '合同管理员',
-  staff: '业务员',
 };
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -157,8 +162,9 @@ export const ACTION_LABELS: Record<string, string> = {
   file_delete: '删除附件',
 };
 
-export function canSeeMoney(role: Role) {
-  return role === 'admin' || role === 'contract_admin';
+export function canSeeMoney(_role: Role) {
+  // 仅剩两种登录角色，均可查看金额
+  return true;
 }
 
 export function fmtMoney(n: number | null | undefined) {

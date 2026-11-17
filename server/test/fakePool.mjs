@@ -9,7 +9,6 @@ import { hashPassword } from '../src/contracts/util.js';
 export const TEST_PASSWORDS = {
   admin: 'admin-pass-123',
   staff: 'staff-pass-123',
-  staff2: 'staff2-pass-123',
   contract: 'contract-pass-123',
 };
 
@@ -33,16 +32,21 @@ export function fakePool() {
   const users = [
     makeUser(1, '主管理员', 'admin', 'admin', TEST_PASSWORDS.admin),
     makeUser(2, '业务员甲', 'staff', 'staff', TEST_PASSWORDS.staff),
-    makeUser(3, '业务员乙', 'staff2', 'staff', TEST_PASSWORDS.staff2),
-    makeUser(4, '合同管理员', 'contract', 'contract_admin', TEST_PASSWORDS.contract),
+    makeUser(3, '合同管理员', 'contract', 'contract_admin', TEST_PASSWORDS.contract),
   ];
+  // 迁移语义：存量业务员账号停用（不可登录），姓名转入业务负责人档案
+  users[1].status = 'disabled';
+  const contractOwners = [
+    { id: 1, name: '业务员甲', status: 'active', created_at: '2026-01-01 00:00:00' },
+  ];
+  const contractCustomers = [];
   const sessions = new Map();
   let sessionSeq = 1;
   const loginLogs = [];
 
   const userById = (id) => users.find((u) => u.id === Number(id)) || null;
 
-  return {
+  const poolApi = {
     repository,
     rows,
     users,
@@ -63,9 +67,47 @@ export function fakePool() {
       }
       if (s.startsWith('SELECT id, name FROM users'))
         return [users.filter((u) => u.status === 'active').map((u) => ({ id: u.id, name: u.name }))];
+      // 业务负责人档案（contract_owners）
+      if (s.startsWith('SELECT id, name FROM contract_owners')) {
+        const q = params[0] != null && s.includes('LIKE') ? String(params[0]).replace(/%/g, '') : '';
+        return [
+          contractOwners
+            .filter((o) => o.status === 'active' && (!q || o.name.includes(q)))
+            .map((o) => ({ id: o.id, name: o.name })),
+        ];
+      }
+      if (s.startsWith('SELECT id, status FROM contract_owners')) {
+        const hit = contractOwners.find((o) => o.name === params[0]);
+        return [hit ? [{ id: hit.id, status: hit.status }] : []];
+      }
+      if (s.startsWith('SELECT id FROM contract_owners WHERE id')) {
+        const hit = contractOwners.find((o) => o.id === Number(params[0]) && o.status === 'active');
+        return [hit ? [{ id: hit.id }] : []];
+      }
+      if (s.startsWith('INSERT INTO contract_owners')) {
+        const id = contractOwners.length + 1;
+        contractOwners.push({ id, name: params[0], status: 'active', created_at: '2026-01-01 00:00:00' });
+        return [{ insertId: id, affectedRows: 1 }];
+      }
+      if (s.startsWith('INSERT INTO contract_customers')) {
+        let hit = contractCustomers.find((c) => c.name === params[0]);
+        if (!hit) {
+          hit = { id: contractCustomers.length + 1, name: params[0] };
+          contractCustomers.push(hit);
+        }
+        return [{ insertId: hit.id, affectedRows: 1 }];
+      }
+      if (s.startsWith('SELECT id FROM contract_customers')) {
+        const hit = contractCustomers.find((c) => c.name === params[0]);
+        return [hit ? [{ id: hit.id }] : []];
+      }
       // 列表查询必须放在单条查询之前：两者的 SELECT 前缀相同
       if (s.startsWith('SELECT id, name, username, role, status, created_at FROM users'))
-        return [users.map(({ id, name, username, role, status, created_at }) => ({ id, name, username, role, status, created_at }))];
+        return [
+          users
+            .filter((u) => u.role !== 'staff')
+            .map(({ id, name, username, role, status, created_at }) => ({ id, name, username, role, status, created_at })),
+        ];
       if (s.startsWith('SELECT id, name, username, role, status'))
         return [userById(params[0]) ? [userById(params[0])] : []];
       if (s.startsWith('INSERT INTO users')) {
@@ -132,7 +174,18 @@ export function fakePool() {
       if (s.includes('FROM contract_customers')) return [[]];
       return [[], []];
     },
+    // 合同事务（POST/PUT contracts 使用连接级事务）
+    async getConnection() {
+      return {
+        query: (sql, params) => poolApi.query(sql, params),
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release: () => {},
+      };
+    },
   };
+  return poolApi;
 }
 
 export function tokenHash(token) {

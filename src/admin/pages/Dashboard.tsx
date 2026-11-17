@@ -19,18 +19,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     const tasks: Promise<unknown>[] = [];
-    if (user && (user.role === 'staff' || user.role === 'admin')) {
+    if (user?.role === 'admin') {
       tasks.push(
         api<{ quota: Quota }>('/quota')
           .then((d) => setQuota(d.quota))
           .catch(() => setQuota(null)),
         api<{ total: number }>('/cards/mine?limit=1')
           .then((d) => setMyCards(d.total))
-          .catch(() => setMyCards(null))
-      );
-    }
-    if (user?.role === 'admin') {
-      tasks.push(
+          .catch(() => setMyCards(null)),
         api<{ counts: { total: number; active: number; disabled: number } }>('/cards?limit=1')
           .then((d) => setAllCards(d.counts))
           .catch(() => setAllCards(null))
@@ -70,7 +66,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {(user?.role === 'staff' || user?.role === 'admin') && (
+        {user?.role === 'admin' && (
           <Link to="/admin/cards" className="rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md">
             <p className="font-semibold text-slate-900">名片管理</p>
             <p className="mt-1 text-sm text-slate-500">生成专属名片、编辑资料、管理短链与二维码</p>
@@ -78,14 +74,12 @@ export default function Dashboard() {
         )}
         <Link to="/admin/contracts" className="rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md">
           <p className="font-semibold text-slate-900">合同管理</p>
-          <p className="mt-1 text-sm text-slate-500">
-            {user?.role === 'staff' ? '查看本人负责的合同与附件' : '合同台账、续签、终止与附件归档'}
-          </p>
+          <p className="mt-1 text-sm text-slate-500">合同台账、续签、终止与附件归档</p>
         </Link>
         {(user?.role === 'admin' || user?.role === 'contract_admin') && (
           <Link to="/admin/users" className="rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md">
             <p className="font-semibold text-slate-900">用户管理</p>
-            <p className="mt-1 text-sm text-slate-500">统一账号与角色（主管理员 / 合同管理员 / 业务员）</p>
+            <p className="mt-1 text-sm text-slate-500">登录账号与角色（主管理员 / 合同管理员）</p>
           </Link>
         )}
       </div>

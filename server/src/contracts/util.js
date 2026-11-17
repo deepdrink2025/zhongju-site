@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 
-// 统一账户：三种角色均可登录（staff 同时是合同负责人档案）
-export const ROLES = ['admin', 'contract_admin', 'staff'];
+// 账号角色：仅两种登录角色；业务员（合同业务负责人）档案在 contract_owners 表，不属于账号体系
+export const ROLES = ['admin', 'contract_admin'];
 export const LOGIN_ROLES = ROLES;
-export const ROLE_LABELS = { admin: '主管理员', contract_admin: '合同管理员', staff: '业务员' };
+export const ROLE_LABELS = { admin: '主管理员', contract_admin: '合同管理员' };
 export const CONTRACT_TYPES = [
   '劳务派遣',
   '劳务外包',
@@ -106,8 +106,18 @@ export function validateContractInput(body) {
   if (!CONTRACT_TYPES.includes(type)) errors.push('合同类型不合法');
   const customer_name = str(body.customer_name);
   if (!customer_name || customer_name.length > 200) errors.push('对方单位必填且不超过 200 字');
-  const owner_user_id = Number(body.owner_user_id);
-  if (!Number.isInteger(owner_user_id) || owner_user_id <= 0) errors.push('必须选择业务负责人');
+  // 业务负责人：优先 owner_user_id（从列表选择）；否则按 owner_name 处理（新姓名保存时自动建档）
+  let owner_user_id = null;
+  let owner_name = null;
+  const ownerRaw = body.owner_user_id;
+  if (ownerRaw !== undefined && ownerRaw !== null && str(ownerRaw) !== '') {
+    const n = Number(ownerRaw);
+    if (!Number.isInteger(n) || n <= 0) errors.push('业务负责人不合法');
+    else owner_user_id = n;
+  } else {
+    owner_name = str(body.owner_name);
+    if (!owner_name || owner_name.length > 50) errors.push('必须选择业务负责人');
+  }
 
   const pickDate = (label, v, required) => {
     const s = str(v);
@@ -154,7 +164,7 @@ export function validateContractInput(body) {
 
   return {
     errors,
-    values: { code: code || null, name, type, our_entity, customer_name, owner_user_id, amount, amount_unit, invoice_type, settle_type, headcount, sign_date, start_date, end_date, renewal_type, storage_location },
+    values: { code: code || null, name, type, our_entity, customer_name, owner_user_id, owner_name, amount, amount_unit, invoice_type, settle_type, headcount, sign_date, start_date, end_date, renewal_type, storage_location },
   };
 }
 

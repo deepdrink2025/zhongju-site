@@ -5,7 +5,7 @@ import { useAuth } from '../auth';
 
 type Tab = 'create' | 'all';
 
-/** 名片管理：业务员生成/管理本人名片；主管理员额外可管理全部名片 */
+/** 名片管理：主管理员生成与管理全部名片（业务员已退出账号体系） */
 export default function Cards() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('create');

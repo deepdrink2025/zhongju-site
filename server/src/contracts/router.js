@@ -45,8 +45,8 @@ export function createContractRouter(pool, opts = {}) {
     );
   }
 
-  function canEditContract(user, row) {
-    // 主管理员 / 合同管理员可编辑全部合同；业务员只读本人合同
+  function canEditContract(user) {
+    // 主管理员 / 合同管理员可编辑全部合同（业务员已退出账号体系）
     return user.role === 'admin' || user.role === 'contract_admin';
   }
 
@@ -65,6 +65,28 @@ export function createContractRouter(pool, opts = {}) {
     return rows[0].id;
   }
 
+  /**
+   * 解析业务负责人（contract_owners）：
+   * - 有 owner_user_id：校验存在且启用，返回其 id；否则返回 null
+   * - 否则按 owner_name 查找；不存在则自动新建档案；存在但已停用返回 null
+   * 返回 null 时由调用方返回 400。
+   */
+  async function resolveOwner(db, values) {
+    if (values.owner_user_id) {
+      const [rows] = await db.query(
+        "SELECT id FROM contract_owners WHERE id = ? AND status = 'active'",
+        [values.owner_user_id]
+      );
+      return rows.length ? rows[0].id : null;
+    }
+    const [exist] = await db.query('SELECT id, status FROM contract_owners WHERE name = ?', [
+      values.owner_name,
+    ]);
+    if (exist.length) return exist[0].status === 'active' ? exist[0].id : null;
+    const [ins] = await db.query('INSERT INTO contract_owners (name) VALUES (?)', [values.owner_name]);
+    return ins.insertId;
+  }
+
   // ---------- 健康检查 ----------
   router.get('/health', async (_req, res) => {
     try {
@@ -77,11 +99,11 @@ export function createContractRouter(pool, opts = {}) {
 
   // 登录 / 会话 / 改密接口统一在 server/src/app.js 提供（/api/auth/*）
 
-  // ---------- 用户与账号（统一账户：三种角色均可登录） ----------
+  // ---------- 用户与账号（仅主管理员 / 合同管理员两种登录角色） ----------
   router.get('/users', auth, a.requireRole('admin', 'contract_admin'), async (req, res, next) => {
     try {
       const [rows] = await pool.query(
-        'SELECT id, name, username, role, status, created_at FROM users ORDER BY id'
+        "SELECT id, name, username, role, status, created_at FROM users WHERE role IN ('admin','contract_admin') ORDER BY id"
       );
       res.json({ users: rows });
     } catch (e) {
@@ -93,7 +115,7 @@ export function createContractRouter(pool, opts = {}) {
     try {
       const { name, username, role, password } = req.body || {};
       const n = String(name || '').trim();
-      const r = String(role || 'staff');
+      const r = String(role || '');
       if (!n || n.length > 50) return res.status(400).json({ error: '姓名必填且不超过 50 字' });
       if (!u.ROLES.includes(r)) return res.status(400).json({ error: '角色不合法' });
 
@@ -266,14 +288,8 @@ export function createContractRouter(pool, opts = {}) {
   });
 
   function buildContractWhere(query, user) {
-    const role = user.role;
     const where = [];
     const params = [];
-    // 业务员只能看到本人负责的合同（只读，金额脱敏由 sanitizeContract 处理）
-    if (role === 'staff') {
-      where.push('c.owner_user_id = ?');
-      params.push(user.id);
-    }
     // 管理员可通过 status=deleted 查看回收站；其他角色该筛选恒为空
     if (String(query.status || '').trim() === 'deleted') {
       if (role === 'admin') where.push('c.deleted_at IS NOT NULL');
@@ -315,10 +331,21 @@ export function createContractRouter(pool, opts = {}) {
     return { whereSql: where.join(' AND '), params };
   }
 
-  // ---------- 负责人列表（所有登录用户可查，供筛选） ----------
+  // ---------- 业务负责人列表（合同表单下拉数据源，所有登录用户可查） ----------
   router.get('/owners', auth, async (req, res, next) => {
     try {
-      const [rows] = await pool.query("SELECT id, name FROM users WHERE status = 'active' ORDER BY id");
+      const q = String(req.query.q || '').trim();
+      let sql = 'SELECT id, name FROM contract_owners';
+      const params = [];
+      if (q) {
+        sql += ' WHERE name LIKE ? AND status = ?';
+        params.push(`%${q}%`, 'active');
+      } else {
+        sql += ' WHERE status = ?';
+        params.push('active');
+      }
+      sql += ' ORDER BY name';
+      const [rows] = await pool.query(sql, params);
       res.json({ owners: rows });
     } catch (e) {
       next(e);
@@ -388,16 +415,12 @@ export function createContractRouter(pool, opts = {}) {
 
   router.get('/contracts/stats', auth, async (req, res, next) => {
     try {
-      const staffScope = req.user.role === 'staff';
-      const scopeSql = staffScope ? ' AND owner_user_id = ?' : '';
-      const scopeParams = staffScope ? [req.user.id] : [];
       const [rows] = await pool.query(
         `
         SELECT type, COUNT(*) AS total,
                SUM(CASE WHEN status IN ('active','renewed') AND end_date >= CURDATE() THEN 1 ELSE 0 END) AS active
-        FROM contracts WHERE deleted_at IS NULL${scopeSql} GROUP BY type
-      `,
-        scopeParams
+        FROM contracts WHERE deleted_at IS NULL GROUP BY type
+      `
       );
       const byType = new Map(rows.map((r) => [r.type, { total: r.total, active: Number(r.active) || 0 }]));
       const categories = u.CONTRACT_CATEGORIES.map((cat) => {
@@ -424,9 +447,8 @@ export function createContractRouter(pool, opts = {}) {
                SUM(CASE WHEN status = 'active' AND end_date >= CURDATE()
                          AND end_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS expiring,
                SUM(CASE WHEN status = 'active' AND end_date < CURDATE() THEN 1 ELSE 0 END) AS expired
-        FROM contracts WHERE deleted_at IS NULL${scopeSql}
-      `,
-        scopeParams
+        FROM contracts WHERE deleted_at IS NULL
+      `
       );
       const ovRow = ov[0] || {};
       const overview = {
@@ -448,10 +470,8 @@ export function createContractRouter(pool, opts = {}) {
       const id = Number(req.params.id);
       const [rows] = await pool.query(`${CONTRACT_SELECT} WHERE c.id = ?`, [id]);
       if (!rows.length) return res.status(404).json({ error: '合同不存在' });
-      // 已删除（回收站）的合同仅管理员可见；业务员只能看本人负责的合同
+      // 已删除（回收站）的合同仅管理员可见
       if (rows[0].deleted_at && req.user.role !== 'admin') return res.status(404).json({ error: '合同不存在' });
-      if (req.user.role === 'staff' && rows[0].owner_user_id !== req.user.id)
-        return res.status(404).json({ error: '合同不存在' });
       res.json({ contract: u.sanitizeContract(rows[0], req.user.role) });
     } catch (e) {
       next(e);
@@ -466,12 +486,14 @@ export function createContractRouter(pool, opts = {}) {
         conn.release();
         return res.status(400).json({ error: errors.join('；') });
       }
-      const [own] = await conn.query("SELECT id FROM users WHERE id = ? AND status = 'active'", [values.owner_user_id]);
-      if (!own.length) {
-        conn.release();
-        return res.status(400).json({ error: '业务负责人不存在' });
-      }
       await conn.beginTransaction();
+      const ownerId = await resolveOwner(conn, values);
+      if (!ownerId) {
+        await conn.rollback();
+        conn.release();
+        return res.status(400).json({ error: '业务负责人不存在或已停用' });
+      }
+      values.owner_user_id = ownerId;
       values.customer_id = await ensureCustomer(conn, values.customer_name);
       let finalCode;
       if (values.code) {
@@ -514,11 +536,12 @@ export function createContractRouter(pool, opts = {}) {
       const [rows] = await pool.query('SELECT * FROM contracts WHERE id = ?', [id]);
       const old = rows[0];
       if (!old || old.deleted_at) return res.status(404).json({ error: '合同不存在' });
-      if (!canEditContract(req.user, old)) return res.status(403).json({ error: '只能编辑本人负责的合同' });
+      if (!canEditContract(req.user)) return res.status(403).json({ error: '没有编辑合同的权限' });
       const { errors, values } = u.validateContractInput(req.body || {});
       if (errors.length) return res.status(400).json({ error: errors.join('；') });
-      const [own] = await pool.query("SELECT id FROM users WHERE id = ? AND status = 'active'", [values.owner_user_id]);
-      if (!own.length) return res.status(400).json({ error: '业务负责人不存在' });
+      const ownerId = await resolveOwner(pool, values);
+      if (!ownerId) return res.status(400).json({ error: '业务负责人不存在或已停用' });
+      values.owner_user_id = ownerId;
       values.customer_id = await ensureCustomer(pool, values.customer_name);
       if (values.code && values.code !== old.code) {
         const [dup] = await pool.query('SELECT id FROM contracts WHERE code = ? AND id != ?', [values.code, id]);
@@ -630,8 +653,6 @@ export function createContractRouter(pool, opts = {}) {
       const id = Number(req.params.id);
       const [own] = await pool.query('SELECT owner_user_id, deleted_at FROM contracts WHERE id = ?', [id]);
       if (!own.length || own[0].deleted_at) return res.status(404).json({ error: '合同不存在' });
-      if (req.user.role === 'staff' && own[0].owner_user_id !== req.user.id)
-        return res.status(404).json({ error: '合同不存在' });
       const [rows] = await pool.query(
         `SELECT f.id, f.contract_id, f.original_name, f.size, f.created_at, u.name AS uploaded_by_name
          FROM contract_files f LEFT JOIN users u ON u.id = f.uploaded_by
@@ -656,7 +677,7 @@ export function createContractRouter(pool, opts = {}) {
       const id = Number(req.params.id);
       const [rows] = await pool.query('SELECT * FROM contracts WHERE id = ? AND deleted_at IS NULL', [id]);
       if (!rows.length) return res.status(404).json({ error: '合同不存在' });
-      if (!canEditContract(req.user, rows[0])) return res.status(403).json({ error: '只能给本人负责的合同上传附件' });
+      if (!canEditContract(req.user)) return res.status(403).json({ error: '没有上传附件的权限' });
       if (!req.file) return res.status(400).json({ error: '请选择要上传的文件' });
       const ext = u.ALLOWED_MIME[req.file.mimetype];
       if (!ext) return res.status(400).json({ error: '仅支持 PDF / JPG / PNG 文件' });
@@ -685,8 +706,6 @@ export function createContractRouter(pool, opts = {}) {
       );
       const f = rows[0];
       if (!f || f.contract_deleted) return res.status(404).json({ error: '附件不存在' });
-      if (req.user.role === 'staff' && f.owner_user_id !== req.user.id)
-        return res.status(404).json({ error: '附件不存在' });
       const filePath = path.join(FILES_DIR, f.stored_name);
       if (!fs.existsSync(filePath)) return res.status(404).json({ error: '文件已丢失' });
       const ext = path.extname(f.stored_name);
@@ -713,8 +732,7 @@ export function createContractRouter(pool, opts = {}) {
       const f = rows[0];
       if (!f || f.contract_deleted) return res.status(404).json({ error: '附件不存在' });
       const allowed =
-        req.user.role === 'admin' || f.uploaded_by === req.user.id ||
-        (req.user.role === 'staff' && f.owner_user_id === req.user.id);
+        req.user.role === 'admin' || f.uploaded_by === req.user.id;
       if (!allowed) return res.status(403).json({ error: '没有权限删除此附件' });
       await pool.query('DELETE FROM contract_files WHERE id = ?', [id]);
       await fsp.unlink(path.join(FILES_DIR, f.stored_name)).catch(() => {});
@@ -729,10 +747,8 @@ export function createContractRouter(pool, opts = {}) {
   router.get('/contracts/:id/logs', auth, async (req, res, next) => {
     try {
       const id = Number(req.params.id);
-      const [exists] = await pool.query('SELECT id, owner_user_id FROM contracts WHERE id = ?', [id]);
+      const [exists] = await pool.query('SELECT id FROM contracts WHERE id = ?', [id]);
       if (!exists.length) return res.status(404).json({ error: '合同不存在' });
-      if (req.user.role === 'staff' && exists[0].owner_user_id !== req.user.id)
-        return res.status(404).json({ error: '合同不存在' });
       const [rows] = await pool.query(
         `SELECT l.id, l.action, l.detail, l.created_at, u.name AS user_name
          FROM contract_logs l LEFT JOIN users u ON u.id = l.user_id

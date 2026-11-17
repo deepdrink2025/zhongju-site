@@ -67,7 +67,7 @@ export default function App() {
         <Route
           path="/admin/cards"
           element={
-            <Protected roles={['admin', 'staff']}>
+            <Protected roles={['admin']}>
               <Cards />
             </Protected>
           }

@@ -19,11 +19,10 @@ test('密码哈希与校验', () => {
   assert.equal(verifyPassword('wrong', salt, hash), false);
 });
 
-test('金额按角色过滤', () => {
+test('金额对所有登录角色可见（业务员已退出账号体系）', () => {
   const row = { id: 1, amount: 12345.5, end_date: '2099-01-01', status: 'active', deleted_at: null };
   assert.equal('amount' in sanitizeContract(row, 'admin'), true);
   assert.equal('amount' in sanitizeContract(row, 'contract_admin'), true);
-  assert.equal('amount' in sanitizeContract(row, 'staff'), false);
 });
 
 test('展示状态计算', () => {
@@ -64,6 +63,41 @@ test('合同字段校验', () => {
     amount: 'abc',
   });
   assert.ok(badAmount.errors.some((e) => e.includes('金额')));
+});
+
+test('业务负责人支持 owner_user_id 或 owner_name（新姓名自动建档）', () => {
+  // 按 id 选择
+  const byId = validateContractInput({
+    name: 'x', type: '其他', customer_name: '某单位', owner_user_id: 1,
+    sign_date: '2026-01-01', start_date: '2026-01-02', end_date: '2027-01-01', invoice_type: '全额专票',
+  });
+  assert.deepEqual(byId.errors, []);
+  assert.equal(byId.values.owner_user_id, 1);
+  assert.equal(byId.values.owner_name, null);
+
+  // 新姓名：无 id，仅传 name
+  const byName = validateContractInput({
+    name: 'x', type: '其他', customer_name: '某单位', owner_name: '王新员',
+    sign_date: '2026-01-01', start_date: '2026-01-02', end_date: '2027-01-01', invoice_type: '全额专票',
+  });
+  assert.deepEqual(byName.errors, []);
+  assert.equal(byName.values.owner_user_id, null);
+  assert.equal(byName.values.owner_name, '王新员');
+
+  // 两者都没有 → 报错
+  const missing = validateContractInput({
+    name: 'x', type: '其他', customer_name: '某单位',
+    sign_date: '2026-01-01', start_date: '2026-01-02', end_date: '2027-01-01', invoice_type: '全额专票',
+  });
+  assert.ok(missing.errors.some((e) => e.includes('业务负责人')));
+
+  // id 与 name 同时存在时以 id 为准
+  const both = validateContractInput({
+    name: 'x', type: '其他', customer_name: '某单位', owner_user_id: 3, owner_name: '王新员',
+    sign_date: '2026-01-01', start_date: '2026-01-02', end_date: '2027-01-01', invoice_type: '全额专票',
+  });
+  assert.deepEqual(both.errors, []);
+  assert.equal(both.values.owner_user_id, 3);
 });
 
 test('内部管理类合同不校验发票类型与合同金额', () => {

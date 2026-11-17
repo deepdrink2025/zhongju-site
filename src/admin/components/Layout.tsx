@@ -55,7 +55,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const [showPw, setShowPw] = useState(false);
   if (!user) return null;
 
-  const canCards = user.role === 'staff' || user.role === 'admin';
+  const canCards = user.role === 'admin';
   const canUsers = user.role === 'admin' || user.role === 'contract_admin';
 
   async function logout() {

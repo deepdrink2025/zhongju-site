@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api as apiRoot, contractApi as api } from '../api';
 import Modal from '../components/Modal';
-import { ROLE_LABELS, LOGIN_ROLES } from '../types';
+import { ROLE_LABELS } from '../types';
 import type { LoginLogRow, Role, UserRow } from '../types';
 import { useAuth } from '../auth';
 
-const ROLES: Role[] = ['admin', 'contract_admin', 'staff'];
+const ROLES: Role[] = ['admin', 'contract_admin'];
 
 function LoginLogsModal({ onClose }: { onClose: () => void }) {
   const [logs, setLogs] = useState<LoginLogRow[]>([]);
@@ -62,7 +62,7 @@ export default function UsersPage() {
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
   const [showLoginLogs, setShowLoginLogs] = useState(false);
-  const [form, setForm] = useState({ name: '', username: '', role: 'staff' as Role, password: '' });
+  const [form, setForm] = useState({ name: '', username: '', role: 'contract_admin' as Role, password: '' });
   const [busy, setBusy] = useState(false);
 
   const fetchList = useCallback(async () => {
@@ -82,17 +82,12 @@ export default function UsersPage() {
   async function create() {
     setBusy(true);
     try {
-      const isStaff = form.role === 'staff';
       await api('/users', {
         method: 'POST',
-        body: JSON.stringify(
-          isStaff
-            ? { name: form.name, role: 'staff' }
-            : { name: form.name, username: form.username, role: form.role, password: form.password }
-        ),
+        body: JSON.stringify({ name: form.name, username: form.username, role: form.role, password: form.password }),
       });
       setCreating(false);
-      setForm({ name: '', username: '', role: 'staff', password: '' });
+      setForm({ name: '', username: '', role: 'contract_admin', password: '' });
       fetchList();
     } catch (e) {
       alert((e as Error).message);
@@ -112,14 +107,7 @@ export default function UsersPage() {
   }
 
   async function changeRole(u: UserRow, newRole: Role) {
-    if (u.role === 'staff' && LOGIN_ROLES.includes(newRole)) {
-      // 业务人员转登录账号需要设置初始密码
-      const pw = window.prompt(`将「${u.name}」设为${ROLE_LABELS[newRole]}，请设置初始密码（至少 8 位）：`);
-      if (!pw) return;
-      await patch(u.id, { role: newRole, password: pw });
-    } else {
-      await patch(u.id, { role: newRole });
-    }
+    await patch(u.id, { role: newRole }, `确认将「${u.name}」的角色改为${ROLE_LABELS[newRole]}？`);
   }
 
   async function resetPw(u: UserRow) {
@@ -129,14 +117,13 @@ export default function UsersPage() {
     alert('密码已重置');
   }
 
-  const staffCount = list.filter((u) => u.role === 'staff').length;
-  const accountCount = list.length - staffCount;
+  const accountCount = list.length;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center">
         <p className="text-sm text-slate-500">
-          共 {accountCount} 个登录账号、{staffCount} 名业务人员（业务人员仅作为合同负责人档案，不登录）。
+          共 {accountCount} 个登录账号（主管理员 / 合同管理员）。业务负责人不属于账号，在合同表单中输入或选择，新姓名保存合同时自动归档。
         </p>
         {isMainAdmin && (
           <button className="btn-plain ml-auto" onClick={() => setShowLoginLogs(true)}>
@@ -144,7 +131,7 @@ export default function UsersPage() {
           </button>
         )}
         <button className="btn-primary ml-2" onClick={() => setCreating(true)}>
-          ＋ 新增人员 / 账号
+          ＋ 新增账号
         </button>
       </div>
 
@@ -164,7 +151,6 @@ export default function UsersPage() {
           </thead>
           <tbody>
             {list.map((u) => {
-              const uIsLogin = LOGIN_ROLES.includes(u.role);
               const roleEditable = isMainAdmin && u.id !== user!.id;
               return (
                 <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -172,7 +158,7 @@ export default function UsersPage() {
                     {u.name}
                     {u.id === user!.id && <span className="ml-1 text-xs text-ct-600">（我）</span>}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-500">{uIsLogin ? u.username : '—'}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-500">{u.username}</td>
                   <td className="px-4 py-3">
                     <select
                       className="select w-auto min-w-[6rem] px-2 py-1 text-xs"
@@ -194,7 +180,7 @@ export default function UsersPage() {
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400">{u.created_at?.slice(0, 10)}</td>
                   <td className="px-4 py-3 text-right">
-                    {uIsLogin && isMainAdmin && (
+                    {isMainAdmin && (
                       <button className="btn-plain" onClick={() => resetPw(u)}>
                         重置密码
                       </button>
@@ -207,7 +193,7 @@ export default function UsersPage() {
                             u.id,
                             { status: u.status === 'active' ? 'disabled' : 'active' },
                             u.status === 'active'
-                              ? `确认停用「${u.name}」？${uIsLogin ? '该账号将无法登录。' : '停用后不能再作为新合同的负责人选择。'}`
+                              ? `确认停用「${u.name}」？该账号将无法登录。`
                               : `确认启用「${u.name}」？`
                           )
                         }
@@ -226,7 +212,7 @@ export default function UsersPage() {
       {showLoginLogs && <LoginLogsModal onClose={() => setShowLoginLogs(false)} />}
 
       {creating && (
-        <Modal title={form.role === 'staff' ? '新增业务人员' : '新增登录账号'} onClose={() => setCreating(false)}>
+        <Modal title="新增登录账号" onClose={() => setCreating(false)}>
           <div className="space-y-3">
             <div>
               <label className="label">角色</label>
@@ -241,26 +227,21 @@ export default function UsersPage() {
                   </option>
                 ))}
               </select>
-              {form.role === 'staff' && (
-                <p className="mt-1 text-xs text-slate-400">业务人员不登录系统，仅用于新建合同时选择负责人。</p>
-              )}
             </div>
             <div>
               <label className="label">姓名 *</label>
               <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
-            {form.role !== 'staff' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">登录名 *（3-30 位字母/数字/中划线/下划线）</label>
-                  <input className="input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
-                </div>
-                <div>
-                  <label className="label">初始密码 *（至少 8 位）</label>
-                  <input className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
-                </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">登录名 *（3-30 位字母/数字/中划线/下划线）</label>
+                <input className="input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
               </div>
-            )}
+              <div>
+                <label className="label">初始密码 *（至少 8 位）</label>
+                <input className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+              </div>
+            </div>
             <div className="flex justify-end gap-2 pt-2">
               <button className="btn-plain" onClick={() => setCreating(false)}>
                 取消
@@ -270,7 +251,8 @@ export default function UsersPage() {
                 disabled={
                   busy ||
                   !form.name ||
-                  (form.role !== 'staff' && (!/^[a-zA-Z0-9_-]{3,30}$/.test(form.username) || form.password.length < 8))
+                  !/^[a-zA-Z0-9_-]{3,30}$/.test(form.username) ||
+                  form.password.length < 8
                 }
                 onClick={create}
               >

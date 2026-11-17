@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { contractApi as api } from '../api';
 import Combobox from './Combobox';
 import { CONTRACT_TYPES, INVOICE_TYPES, AMOUNT_UNITS, OUR_ENTITIES, RENEWAL_TYPES, SETTLE_TYPES, canSeeMoney, fmtSize, isInternalContract, defaultInvoiceType, DEFAULT_INTERNAL_INVOICE_TYPE } from '../types';
-import type { Contract, Customer, UserRow } from '../types';
+import type { Contract, Customer, Owner } from '../types';
 import { useAuth } from '../auth';
-import { LOGIN_ROLES } from '../types';
 
 type FormState = Record<string, string>;
 
@@ -41,13 +40,13 @@ export default function ContractForm({
   onCancel: () => void;
 }) {
   const { user } = useAuth();
-  const role = user!.role;
-  const showMoney = canSeeMoney(role);
-  const canManage = LOGIN_ROLES.includes(role);
+  const showMoney = canSeeMoney(user!.role);
   const [form, setForm] = useState<FormState>(() => toForm(initial));
+  // 业务负责人：从列表选择时记 owner_user_id；输入新姓名时 owner_user_id 置空、文本保留
+  const [ownerText, setOwnerText] = useState(initial?.owner_name ?? '');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [users, setUsers] = useState<UserRow[]>([]);
+  const [owners, setOwners] = useState<Owner[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // 内部管理类合同（合伙人合作协议 / 内部人员劳动合同）不涉及开票与金额
@@ -55,12 +54,8 @@ export default function ContractForm({
 
   useEffect(() => {
     api<{ customers: Customer[] }>('/customers').then((d) => setCustomers(d.customers));
-    if (canManage) {
-      api<{ users: UserRow[] }>('/users').then((d) =>
-        setUsers(d.users.filter((u) => u.status === 'active'))
-      );
-    }
-  }, [canManage]);
+    api<{ owners: Owner[] }>('/owners').then((d) => setOwners(d.owners));
+  }, []);
 
   function set(key: string, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -75,12 +70,24 @@ export default function ContractForm({
     }));
   }
 
+  /** 业务负责人变更：输入命中已有档案 → 记 id；否则视为新姓名，保存时自动建档 */
+  function setOwner(v: string) {
+    const match = owners.find((o) => String(o.id) === v || o.name === v);
+    if (match) {
+      setForm((f) => ({ ...f, owner_user_id: String(match.id) }));
+      setOwnerText(match.name);
+    } else {
+      setForm((f) => ({ ...f, owner_user_id: '' }));
+      setOwnerText(v);
+    }
+  }
+
   async function submit() {
     // 提交前前端必选校验，避免填一半就被服务端打回
     const missing: string[] = [];
     if (!form.name.trim()) missing.push('合同名称');
     if (!form.customer_name.trim()) missing.push('对方单位');
-    if (canManage && !form.owner_user_id) missing.push('业务负责人');
+    if (!form.owner_user_id && !ownerText.trim()) missing.push('业务负责人');
     if (!form.sign_date) missing.push('签订日期');
     if (!form.start_date) missing.push('生效日期');
     if (!form.end_date) missing.push('到期日期');
@@ -102,7 +109,8 @@ export default function ContractForm({
         type: form.type,
         our_entity: form.our_entity || null,
         customer_name: form.customer_name,
-        owner_user_id: canManage ? Number(form.owner_user_id) || null : null,
+        owner_user_id: form.owner_user_id ? Number(form.owner_user_id) : null,
+        owner_name: form.owner_user_id ? null : ownerText.trim(),
         amount: showMoney && !isInternal && form.amount !== '' ? form.amount : null,
         amount_unit: showMoney && !isInternal ? form.amount_unit || null : null,
         invoice_type: isInternal ? DEFAULT_INTERNAL_INVOICE_TYPE : form.invoice_type,
@@ -189,18 +197,18 @@ export default function ContractForm({
             onChange={(v) => set('our_entity', v)}
           />
         </div>
-        {canManage && (
-          <div>
-            <label className="label">业务负责人 *</label>
-            <Combobox
-              value={users.find((u) => String(u.id) === form.owner_user_id)?.name ?? ''}
-              options={users.map((u) => ({ label: u.name, value: String(u.id) }))}
-              onChange={(v) => set('owner_user_id', v)}
-              placeholder="请选择"
-              editable={false}
-            />
-          </div>
-        )}
+        <div>
+          <label className="label">业务负责人 *（可输入姓名搜索，新姓名保存后自动归档）</label>
+          <Combobox
+            value={ownerText}
+            options={owners.map((o) => ({ label: o.name, value: String(o.id) }))}
+            onChange={setOwner}
+            placeholder="输入或选择业务负责人"
+            editable
+            filterable
+            emptyHint={`无匹配，保存后「${ownerText.trim()}」将新建为业务负责人`}
+          />
+        </div>
         {!isInternal && (
           <div>
             <label className="label">发票类型 *</label>

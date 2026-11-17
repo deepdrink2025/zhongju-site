@@ -34,7 +34,7 @@ async function fixture(t, options = {}) {
     });
     return { status: response.status, headers: response.headers, data: await response.json() };
   };
-  const login = async (username = 'staff', password = TEST_PASSWORDS[username]) => {
+  const login = async (username = 'admin', password = TEST_PASSWORDS[username]) => {
     const result = await req('/api/auth/login', { method: 'POST', body: { username, password } });
     assert.equal(result.status, 200, JSON.stringify(result.data));
     return result.data.token;
@@ -78,63 +78,60 @@ test('successful logins do not consume the failure allowance', async (t) => {
 
 test('quota is counted per account, survives restart, and stays independent of NAT ip', async (t) => {
   const f = await fixture(t, { dailyLimit: 1 });
-  const staff = await f.login('staff');
-  const staff2 = await f.login('staff2');
   const admin = await f.login('admin', TEST_PASSWORDS.admin);
+  const contract = await f.login('contract', TEST_PASSWORDS.contract);
 
-  const first = await f.req('/api/cards', { method: 'POST', body: CARD, token: staff });
+  const first = await f.req('/api/cards', { method: 'POST', body: CARD, token: admin });
   assert.equal(first.status, 200);
   assert.equal(
     (
       await f.req('/api/cards', {
         method: 'POST',
         body: CARD,
-        token: staff,
+        token: admin,
         headers: { 'X-Forwarded-For': '203.0.113.5' },
       })
     ).status,
     429
   );
-  // 其他账号配额不受影响
-  assert.equal((await f.req('/api/cards', { method: 'POST', body: CARD, token: staff2 })).status, 200);
-  assert.equal((await f.req('/api/cards', { method: 'POST', body: CARD, token: admin })).status, 200);
+  // 名片仅主管理员可创建，合同管理员无权限
+  assert.equal((await f.req('/api/cards', { method: 'POST', body: CARD, token: contract })).status, 403);
 
-  const mine = await f.req('/api/cards/mine', { token: staff });
+  const mine = await f.req('/api/cards/mine', { token: admin });
   assert.equal(mine.data.total, 1);
   assert.equal(mine.data.items[0].shortCode, first.data.record.shortCode);
-  const quota = await f.req('/api/quota', { token: staff });
+  const quota = await f.req('/api/quota', { token: admin });
   assert.equal(quota.data.quota.remaining, 0);
   assert.equal(quota.data.quota.timeZone, 'Asia/Shanghai');
 
   const restart = await fixture(t, { pool: f.pool, dailyLimit: 1 });
-  const afterRestart = await restart.login('staff');
+  const afterRestart = await restart.login('admin', TEST_PASSWORDS.admin);
   assert.equal(
     (await restart.req('/api/cards', { method: 'POST', body: CARD, token: afterRestart })).status,
     429
   );
 });
 
-test('only the owner or administrator can edit/delete; editing preserves the short link', async (t) => {
+test('only the administrator can edit/delete/manage cards; editing preserves the short link', async (t) => {
   const f = await fixture(t);
-  const a = await f.login('staff');
-  const b = await f.login('staff2');
   const admin = await f.login('admin', TEST_PASSWORDS.admin);
-  const created = await f.req('/api/cards', { method: 'POST', body: CARD, token: a });
+  const contract = await f.login('contract', TEST_PASSWORDS.contract);
+  const created = await f.req('/api/cards', { method: 'POST', body: CARD, token: admin });
   const code = created.data.record.shortCode;
   for (const [path, method, body] of [
     [`/api/cards/${code}`, 'DELETE', undefined],
     [`/api/cards/${code}`, 'PUT', CARD],
     [`/api/cards/${code}/manage`, 'GET', undefined],
   ])
-    assert.equal((await f.req(path, { method, body, token: b })).status, 403);
+    assert.equal((await f.req(path, { method, body, token: contract })).status, 403);
   const updated = await f.req(`/api/cards/${code}`, {
     method: 'PUT',
     body: { ...CARD, title: '更新职位' },
-    token: a,
+    token: admin,
   });
   assert.equal(updated.status, 200);
   assert.equal(updated.data.record.shortCode, code);
-  assert.equal((await f.req('/api/quota', { token: a })).data.quota.used, 1);
+  assert.equal((await f.req('/api/quota', { token: admin })).data.quota.used, 1);
   const publicCard = await f.req(`/api/cards/${code}`);
   assert.equal(publicCard.data.record.title, '更新职位');
   assert.equal(publicCard.headers.get('cache-control'), 'no-store');
@@ -144,7 +141,7 @@ test('only the owner or administrator can edit/delete; editing preserves the sho
       await f.req(`/api/cards/${code}/status`, {
         method: 'PATCH',
         body: { status: 'disabled' },
-        token: a,
+        token: contract,
       })
     ).status,
     403
@@ -155,19 +152,27 @@ test('only the owner or administrator can edit/delete; editing preserves the sho
     token: admin,
   });
   assert.equal((await f.req(`/api/cards/${code}`)).data.record, undefined);
-  assert.equal((await f.req(`/api/cards/${code}`, { method: 'DELETE', token: a })).status, 200);
+  assert.equal((await f.req(`/api/cards/${code}`, { method: 'DELETE', token: admin })).status, 200);
 });
 
-test('administrator can reassign a card to another account', async (t) => {
+test('administrator can reassign a card to another administrator', async (t) => {
   const f = await fixture(t);
   const admin = await f.login('admin', TEST_PASSWORDS.admin);
-  const owner = await f.login('staff');
-  const target = await f.login('staff2');
-  const created = await f.req('/api/cards', { method: 'POST', body: CARD, token: owner });
+  const contract = await f.login('contract', TEST_PASSWORDS.contract);
+  const created = await f.req('/api/cards', { method: 'POST', body: CARD, token: admin });
   const code = created.data.record.shortCode;
 
+  const created2 = await f.req('/api/contract/users', {
+    method: 'POST',
+    token: admin,
+    body: { name: '二号管理员', username: 'admin2', role: 'admin', password: 'admin2-pass-123' },
+  });
+  assert.equal(created2.status, 200);
+  const admin2Id = created2.data.user.id;
+  const admin2 = await f.login('admin2', 'admin2-pass-123');
+
   assert.equal(
-    (await f.req(`/api/cards/${code}/owner`, { method: 'PUT', body: { user_id: 3 }, token: owner })).status,
+    (await f.req(`/api/cards/${code}/owner`, { method: 'PUT', body: { user_id: admin2Id }, token: contract })).status,
     403
   );
   assert.equal(
@@ -175,26 +180,26 @@ test('administrator can reassign a card to another account', async (t) => {
     400
   );
   assert.equal(
-    (await f.req(`/api/cards/${code}/owner`, { method: 'PUT', body: { user_id: 3 }, token: admin })).status,
+    (await f.req(`/api/cards/${code}/owner`, { method: 'PUT', body: { user_id: admin2Id }, token: admin })).status,
     200
   );
-  assert.equal((await f.req(`/api/cards/${code}/manage`, { token: target })).status, 200);
-  assert.equal((await f.req(`/api/cards/${code}/manage`, { token: owner })).status, 403);
+  assert.equal((await f.req(`/api/cards/${code}/manage`, { token: admin2 })).status, 200);
+  assert.equal((await f.req(`/api/cards/${code}/manage`, { token: admin })).status, 200);
 });
 
 test('logout revokes the stored session; disabled accounts cannot log in', async (t) => {
   const f = await fixture(t);
-  const staff = await f.login('staff');
-  assert.equal((await f.req('/api/auth/me', { token: staff })).status, 200);
-  assert.equal((await f.req('/api/auth/logout', { method: 'POST', token: staff })).status, 200);
-  assert.equal((await f.req('/api/auth/me', { token: staff })).status, 401);
+  const contract = await f.login('contract', TEST_PASSWORDS.contract);
+  assert.equal((await f.req('/api/auth/me', { token: contract })).status, 200);
+  assert.equal((await f.req('/api/auth/logout', { method: 'POST', token: contract })).status, 200);
+  assert.equal((await f.req('/api/auth/me', { token: contract })).status, 401);
 
-  f.pool.users.find((u) => u.username === 'staff2').status = 'disabled';
+  f.pool.users.find((u) => u.username === 'contract').status = 'disabled';
   assert.equal(
     (
       await f.req('/api/auth/login', {
         method: 'POST',
-        body: { username: 'staff2', password: TEST_PASSWORDS.staff2 },
+        body: { username: 'contract', password: TEST_PASSWORDS.contract },
       })
     ).status,
     401

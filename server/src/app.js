@@ -198,14 +198,14 @@ export function createApp({
   app.get(
     '/api/quota',
     authenticated,
-    auth.requireRole('staff', 'admin'),
+    auth.requireRole('admin'),
     asyncRoute(async (req, res) => res.json({ ok: true, quota: await quota(req.user.id) }))
   );
 
   app.get(
     '/api/cards/mine',
     authenticated,
-    auth.requireRole('staff', 'admin'),
+    auth.requireRole('admin'),
     asyncRoute(async (req, res) => {
       const options = listOptions(req),
         result = await repository.listCards({
@@ -243,7 +243,7 @@ export function createApp({
   app.post(
     '/api/cards',
     authenticated,
-    auth.requireRole('staff', 'admin'),
+    auth.requireRole('admin'),
     asyncRoute(async (req, res) => {
       if (!createBurst.consume(req.ip || 'unknown')) throw error(429, '请求过于频繁，请稍后重试');
       const data = await normalizeCard(req.body),
@@ -259,7 +259,7 @@ export function createApp({
   app.get(
     '/api/cards/:code/manage',
     authenticated,
-    auth.requireRole('staff', 'admin'),
+    auth.requireRole('admin'),
     asyncRoute(async (req, res) => {
       const row = await find(req.params.code);
       if (!canManage(req.user, row)) throw error(403, '只能管理本人名片');
@@ -277,7 +277,7 @@ export function createApp({
   app.put(
     '/api/cards/:code',
     authenticated,
-    auth.requireRole('staff', 'admin'),
+    auth.requireRole('admin'),
     asyncRoute(async (req, res) => {
       const row = await find(req.params.code);
       if (!canManage(req.user, row)) throw error(403, '只能修改本人名片');
@@ -318,7 +318,7 @@ export function createApp({
   app.delete(
     '/api/cards/:code',
     authenticated,
-    auth.requireRole('staff', 'admin'),
+    auth.requireRole('admin'),
     asyncRoute(async (req, res) => {
       const row = await find(req.params.code);
       if (!canManage(req.user, row)) throw error(403, '只能删除本人名片');

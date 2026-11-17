@@ -22,11 +22,10 @@ try {
   );
   await ensureSchema();
 
-  // 2. 创建统一账户（主管理员 + 两名业务员）
+  // 2. 创建账号：仅 admin / contract_admin 两种登录角色
   const accounts = [
     ['主管理员', 'admin', 'admin', 'integration-admin-pass'],
-    ['业务员甲', 'staff', 'staff', 'integration-staff-pass'],
-    ['业务员乙', 'staff2', 'staff', 'integration-staff2-pass'],
+    ['合同管理员', 'contract', 'contract_admin', 'integration-contract-pass'],
   ];
   for (const [name, username, role, password] of accounts) {
     const { salt, hash } = hashPassword(password);
@@ -35,8 +34,22 @@ try {
       [name, username, role, salt, hash]
     );
   }
+  // 3. 迁移语义验证：存量业务员账号在 ensureSchema 后应被停用且不可登录
+  {
+    const { salt, hash } = hashPassword('integration-staff-pass');
+    await pool.query(
+      'INSERT INTO users (name, username, role, salt, password_hash) VALUES (?, ?, ?, ?, ?)',
+      ['业务员甲', 'staff', 'staff', salt, hash]
+    );
+  }
+  await ensureSchema(); // 幂等重跑：应停用 staff 并完成外键切换
+  const [staffRow] = await pool.query("SELECT status FROM users WHERE username='staff'");
+  assert.equal(staffRow[0].status, 'disabled');
+  const [ownerRow] = await pool.query("SELECT id, status FROM contract_owners WHERE name='业务员甲'");
+  assert.equal(ownerRow.length, 1);
+  assert.equal(ownerRow[0].status, 'active');
 
-  // 3. 存量名片归属迁移：无归属 → 主管理员
+  // 4. 存量名片归属迁移：无归属 → 主管理员
   assert.equal(await migrateCardOwnership(), 1);
   const [old] = await pool.query('SELECT name, owner_user_id FROM cards WHERE id=?', ['history']);
   assert.equal(old[0].name, '历史测试名片');
@@ -57,13 +70,16 @@ try {
     });
     return { status: response.status, data: await response.json() };
   };
-  const login = async (username, password) =>
-    (await req('/api/auth/login', { method: 'POST', body: { username, password } })).data.token;
-  const a = await login('staff', 'integration-staff-pass');
-  const b = await login('staff2', 'integration-staff2-pass');
-  const admin = await login('admin', 'integration-admin-pass');
-  assert.ok(a && b && admin);
+  const login = async (username, password) => {
+    const r = await req('/api/auth/login', { method: 'POST', body: { username, password } });
+    return { status: r.status, token: r.data?.token };
+  };
+  const admin = (await login('admin', 'integration-admin-pass')).token;
+  const contract = (await login('contract', 'integration-contract-pass')).token;
+  assert.ok(admin && contract);
+  assert.equal((await login('staff', 'integration-staff-pass')).status, 401);
 
+  // 5. 名片仅主管理员可创建，配额按账号统计
   const card = {
     name: '集成测试',
     phone: '13800000000',
@@ -74,21 +90,21 @@ try {
     avatar: '',
   };
   const concurrent = await Promise.all(
-    Array.from({ length: 5 }, () => req('/api/cards', { method: 'POST', body: card, token: a }))
+    Array.from({ length: 5 }, () => req('/api/cards', { method: 'POST', body: card, token: admin }))
   );
   assert.equal(concurrent.filter((result) => result.status === 200).length, 2);
   assert.equal(concurrent.filter((result) => result.status === 429).length, 3);
+  assert.equal((await req('/api/cards', { method: 'POST', body: card, token: contract })).status, 403);
   const code = concurrent.find((result) => result.status === 200).data.record.shortCode;
-  assert.equal((await req('/api/cards', { method: 'POST', body: card, token: b })).status, 200);
-  assert.equal((await req(`/api/cards/${code}`, { method: 'DELETE', token: b })).status, 403);
   const edited = await req(`/api/cards/${code}`, {
     method: 'PUT',
     body: { ...card, title: '新职位' },
-    token: a,
+    token: admin,
   });
   assert.equal(edited.status, 200);
   assert.equal(edited.data.record.shortCode, code);
 
+  // 6. 分页与转义搜索
   const seed = [];
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
   for (let i = 0; i < 501; i++) {
@@ -112,14 +128,57 @@ try {
   assert.equal(escaped.status, 200);
   assert.equal(escaped.data.total, 1);
 
-  // 归属改派：历史名片 → 业务员甲
-  const [staffA] = await pool.query("SELECT id FROM users WHERE username='staff'");
+  // 7. 合同业务负责人：新姓名自动建档、按 id 选择、非法 id 拒绝
+  const future = (n) => {
+    const d = new Date(Date.now() + n * 86400000);
+    return d.toISOString().slice(0, 10);
+  };
+  const baseBody = {
+    name: '集成测试合同',
+    type: '劳务派遣',
+    customer_name: '德州某某机械有限公司',
+    sign_date: future(-1),
+    start_date: future(0),
+    end_date: future(365),
+    invoice_type: '全额专票',
+  };
+  const created = await req('/api/contract/contracts', {
+    method: 'POST',
+    token: contract,
+    body: { ...baseBody, owner_name: '王新员' },
+  });
+  assert.equal(created.status, 200);
+  const owners = (await req('/api/contract/owners', { token: contract })).data.owners;
+  const owner = owners.find((o) => o.name === '王新员');
+  assert.ok(owner);
+  assert.equal(
+    (
+      await req('/api/contract/contracts', {
+        method: 'POST',
+        token: admin,
+        body: { ...baseBody, owner_user_id: owner.id },
+      })
+    ).status,
+    200
+  );
+  assert.equal(
+    (
+      await req('/api/contract/contracts', {
+        method: 'POST',
+        token: admin,
+        body: { ...baseBody, owner_user_id: 99999 },
+      })
+    ).status,
+    400
+  );
+
+  // 8. 归属改派（名片）：仅主管理员可改派
   assert.equal(
     (
       await req('/api/cards/abcd2345/owner', {
         method: 'PUT',
-        body: { user_id: staffA[0].id },
-        token: b,
+        body: { user_id: 1 },
+        token: contract,
       })
     ).status,
     403
@@ -128,18 +187,18 @@ try {
     (
       await req('/api/cards/abcd2345/owner', {
         method: 'PUT',
-        body: { user_id: staffA[0].id },
+        body: { user_id: 1 },
         token: admin,
       })
     ).status,
     200
   );
-  const mine = await req('/api/cards/mine', { token: a });
+  const mine = await req('/api/cards/mine', { token: admin });
   assert.equal(mine.data.total, 3);
-  await req('/api/auth/logout', { method: 'POST', token: a });
-  assert.equal((await req('/api/auth/me', { token: a })).status, 401);
+  await req('/api/auth/logout', { method: 'POST', token: admin });
+  assert.equal((await req('/api/auth/me', { token: admin })).status, 401);
   console.log(
-    'PASS real MySQL: unified accounts, legacy card migration, concurrent quota, ownership reassignment, session revocation, escaped search and pagination work'
+    'PASS real MySQL: two-role accounts, staff deprecation migration, owner archiving, legacy card migration, concurrent quota, ownership reassignment, escaped search and pagination work'
   );
 } finally {
   if (server) await new Promise((resolve) => server.close(resolve));

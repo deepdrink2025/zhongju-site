@@ -13,6 +13,8 @@ export default function Combobox({
   wrapperClassName = 'w-full',
   inputClassName = 'input pr-7',
   editable = true,
+  filterable = false,
+  emptyHint,
 }: {
   value: string;
   options: ComboOption[];
@@ -21,9 +23,19 @@ export default function Combobox({
   wrapperClassName?: string;
   inputClassName?: string;
   editable?: boolean;
+  /** 输入时对选项做模糊过滤（仅可输入模式生效） */
+  filterable?: boolean;
+  /** 过滤后无匹配时显示的提示文字 */
+  emptyHint?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  const kw = value.trim().toLowerCase();
+  const visible =
+    editable && filterable && kw
+      ? options.filter((o) => o.label.toLowerCase().includes(kw))
+      : options;
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -53,7 +65,7 @@ export default function Combobox({
       </button>
       {open && (
         <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-          {options.map((o) => (
+          {visible.map((o) => (
             <button
               key={o.value}
               type="button"
@@ -66,6 +78,9 @@ export default function Combobox({
               {o.label}
             </button>
           ))}
+          {visible.length === 0 && emptyHint && (
+            <div className="px-3 py-1.5 text-xs text-slate-400">{emptyHint}</div>
+          )}
         </div>
       )}
     </div>
