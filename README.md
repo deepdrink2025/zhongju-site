@@ -191,7 +191,7 @@ cd zhongju-site/deploy
 2. 没有 `.env` 就从 `.env.example` 复制；`DB_PASSWORD`、`INIT_ADMIN_PASSWORD` 里"请改成…"的占位符**自动换成随机强密码**
 3. 校验公共 bridge 网络是否存在（不存在则创建）、`mysql-common` 是否在该网络中
 4. 读到 `MYSQL_ROOT_PASSWORD` 就自动在 `mysql-common` 里建库、建用户、授权（幂等，可重复执行），成功后清空该字段
-5. `docker compose up -d --build` 构建并启动 `web`（Nginx + 静态站）+ `api`（名片 + 合同服务）
+5. 构建镜像并初始化合同附件卷权限，再启动 `web`（Nginx + 静态站）和 `api`（名片 + 合同服务）
 6. 轮询 `/api/health` 等 API 起来，失败则返回非零状态并提示查看日志
 7. 幂等创建首个主管理员（已存在则跳过），并把存量无归属名片迁到该账号
 8. 打印访问地址与后台入口，不输出密码

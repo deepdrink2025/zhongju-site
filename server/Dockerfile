@@ -14,6 +14,8 @@ COPY sql ./sql
 ENV NODE_ENV=production \
     PORT=8787
 
+# 让新建的附件卷继承 API 运行用户的目录所有权。
+RUN mkdir -p /data/files && chown node:node /data/files
 USER node
 EXPOSE 8787
 

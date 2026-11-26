@@ -33,7 +33,8 @@ export function createContractRouter(pool, opts = {}) {
 
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: u.MAX_FILE_SIZE, files: 1 },
+    // multipart 解析器在达到限制时就截断，允许恰好 10 MiB 的文件通过。
+    limits: { fileSize: u.MAX_FILE_SIZE + 1, files: 1 },
   });
 
   const auth = a.authRequired(pool);

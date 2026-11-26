@@ -1,5 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import express from 'express';
+import { createSession } from '../src/auth.js';
+import { createContractRouter } from '../src/contracts/router.js';
+import { fakePool } from './fakePool.mjs';
 import {
   hashPassword,
   verifyPassword,
@@ -9,6 +16,7 @@ import {
   validateCustomerInput,
   CONTRACT_TYPES,
   DEFAULT_INTERNAL_INVOICE_TYPE,
+  MAX_FILE_SIZE,
 } from '../src/contracts/util.js';
 
 test('密码哈希与校验', () => {
@@ -138,4 +146,44 @@ test('客户字段校验', () => {
   assert.equal(ok.values.status, 'active');
   const bad = validateCustomerInput({ name: '' });
   assert.ok(bad.errors.length > 0);
+});
+
+test('合同附件允许恰好 10 MiB，超出一字节时拒绝且不写入', async (t) => {
+  const filesDir = await mkdtemp(join(tmpdir(), 'contract-upload-'));
+  const pool = fakePool();
+  const query = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    if (sql.startsWith('SELECT * FROM contracts WHERE id = ? AND deleted_at IS NULL')) return [[{ id: 1 }]];
+    if (sql.startsWith('INSERT INTO contract_files ')) return [{ insertId: 1 }];
+    return query(sql, params);
+  };
+  const app = express();
+  app.use('/api/contract', createContractRouter(pool, { filesDir }));
+  const server = app.listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(filesDir, { recursive: true });
+  });
+  await new Promise((resolve, reject) => server.once('listening', resolve).once('error', reject));
+  const token = await createSession(pool, 1);
+  const url = `http://127.0.0.1:${server.address().port}/api/contract/contracts/1/files`;
+  const filename = '签署附件.pdf';
+  const pdf = Buffer.alloc(MAX_FILE_SIZE + 1, 0x20);
+  pdf.write('%PDF-1.4\n');
+
+  async function upload(bytes) {
+    const body = new FormData();
+    body.append('file', new Blob([pdf.subarray(0, bytes)], { type: 'application/pdf' }), filename);
+    return fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body });
+  }
+
+  const atLimit = await upload(MAX_FILE_SIZE);
+  assert.equal(atLimit.status, 200);
+  assert.deepEqual((await atLimit.json()).file, { id: 1, original_name: filename, size: MAX_FILE_SIZE });
+  const overLimit = await upload(MAX_FILE_SIZE + 1);
+  assert.equal(overLimit.status, 400);
+  assert.match((await overLimit.json()).error, /超过 10MB/);
+  const storedFiles = await readdir(filesDir);
+  assert.equal(storedFiles.length, 1);
+  assert.equal((await stat(join(filesDir, storedFiles[0]))).size, MAX_FILE_SIZE);
 });

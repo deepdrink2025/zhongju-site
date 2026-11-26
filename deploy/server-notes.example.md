@@ -28,7 +28,7 @@ python3 bootstrap.py --shared-network bridge-network --http-port 8080
 
 Nginx Proxy Manager → `zhongju-site-web:80` → `zhongju-card-api:8787` → MySQL。`web` 接入项目内部网络和配置的共享网络，API 不发布宿主端口。两个容器均配置健康检查、自动重启和日志轮转。
 
-在 NPM 中将自己的域名转发到 `http://zhongju-site-web:80`，Advanced 配置为 `client_max_body_size 4m;`。证书、强制 HTTPS 和续期在面板中管理。实际 Proxy Host ID 和管理面板地址仅填写到本地副本。
+在 NPM 中将自己的域名转发到 `http://zhongju-site-web:80`，Advanced 配置为 `client_max_body_size 12m;`，为 10 MB 合同附件和表单开销留出空间。证书、强制 HTTPS 和续期在面板中管理。实际 Proxy Host ID 和管理面板地址仅填写到本地副本。
 
 ## 账号与维护
 
@@ -42,7 +42,7 @@ Nginx Proxy Manager → `zhongju-site-web:80` → `zhongju-card-api:8787` → My
 cd deploy
 docker compose ps
 docker compose logs --tail=100 api web
-docker compose up -d --build --wait
+./deploy.sh
 python3 verify-deployment.py
 # 在自己的域名上验证：
 python3 verify-deployment.py --base-url https://example.com

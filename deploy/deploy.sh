@@ -14,7 +14,7 @@
 #   2. 没有 .env 就自动从 .env.example 复制；占位符（"请改成…"）自动换成随机强密码
 #   3. 校验公共 bridge 网络、DB 容器是否就绪
 #   4. 填了 MYSQL_ROOT_PASSWORD 就自动在 mysql-common 里建库、建用户并授权
-#   5. docker compose up -d --build（web + api 一起）
+#   5. 构建镜像，初始化附件卷权限，启动 web + api
 #   6. 轮询 /api/health，等接口起来（失败则给出看日志的命令）
 #   7. 幂等创建首个主管理员账号（已完成则跳过），并迁移存量名片归属
 #   8. 打印访问地址与后台入口
@@ -188,8 +188,12 @@ SQL
   fi
 
   # ---- 5. 构建 + 启动 ----
-  info "构建镜像并启动（首次构建约 1-3 分钟）"
-  "${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" up -d --build
+  local compose=("${DC[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE")
+  info "构建镜像（首次构建约 1-3 分钟）"
+  "${compose[@]}" build
+  info "初始化合同附件卷权限"
+  "${compose[@]}" run --rm --no-deps -T --user 0:0 --entrypoint chown api node:node /data/files
+  "${compose[@]}" up -d
   ok "容器已启动"
 
   # ---- 6. 健康检查 ----
