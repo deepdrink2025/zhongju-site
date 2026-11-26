@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { contractApi as api } from '../api';
 import Combobox from './Combobox';
-import { CONTRACT_TYPES, INVOICE_TYPES, AMOUNT_UNITS, OUR_ENTITIES, RENEWAL_TYPES, SETTLE_TYPES, canSeeMoney, fmtSize, isInternalContract, defaultInvoiceType, DEFAULT_INTERNAL_INVOICE_TYPE } from '../types';
+import { CONTRACT_TYPES, INVOICE_TYPES, AMOUNT_UNITS, OUR_ENTITIES, RENEWAL_TYPES, SETTLE_TYPES, attachmentLimitText, canSeeMoney, fmtSize, isInternalContract, defaultInvoiceType, DEFAULT_INTERNAL_INVOICE_TYPE } from '../types';
 import type { Contract, Customer, Owner } from '../types';
 import { useAuth } from '../auth';
 
@@ -31,11 +31,13 @@ function toForm(c: Contract | null): FormState {
 export default function ContractForm({
   initial,
   contractId,
+  maxFileSize,
   onDone,
   onCancel,
 }: {
   initial: Contract | null;
   contractId?: number;
+  maxFileSize: number | undefined;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -45,6 +47,7 @@ export default function ContractForm({
   // 业务负责人：从列表选择时记 owner_user_id；输入新姓名时 owner_user_id 置空、文本保留
   const [ownerText, setOwnerText] = useState(initial?.owner_name ?? '');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [owners, setOwners] = useState<Owner[]>([]);
   const [error, setError] = useState('');
@@ -59,6 +62,17 @@ export default function ContractForm({
 
   function set(key: string, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function chooseFiles(chosen: File[]) {
+    const oversized = maxFileSize == null ? [] : chosen.filter((file) => file.size > maxFileSize);
+    setFileError(oversized.length
+      ? `${oversized.map((file) => file.name).join('、')} 超出大小限制。${attachmentLimitText(maxFileSize)}。`
+      : '');
+    setPendingFiles((prev) => [
+      ...prev,
+      ...chosen.filter((file) => !oversized.includes(file) && !prev.some((p) => p.name === file.name && p.size === file.size)),
+    ]);
   }
 
   /** 切换合同类型：切到内部管理类合同时，发票类型自动归到差额专票（切换回来时保留原选择） */
@@ -295,7 +309,8 @@ export default function ContractForm({
           />
         </div>
         <div className="sm:col-span-2">
-          <label className="label">合同扫描件（PDF / 图片，可多选，单文件 ≤10MB，保存时自动上传）</label>
+          <label className="label">合同扫描件（PDF / 图片，可多选，保存时自动上传）</label>
+          <p className="mb-2 text-xs text-slate-500">{attachmentLimitText(maxFileSize)}</p>
           <label className="btn-plain inline-flex cursor-pointer items-center gap-2">
             📎 选择文件
             <input
@@ -304,12 +319,12 @@ export default function ContractForm({
               multiple
               accept=".pdf,.jpg,.jpeg,.png"
               onChange={(e) => {
-                const chosen = Array.from(e.target.files ?? []);
-                setPendingFiles((prev) => [...prev, ...chosen.filter((f) => !prev.some((p) => p.name === f.name && p.size === f.size))]);
+                chooseFiles(Array.from(e.target.files ?? []));
                 e.target.value = '';
               }}
             />
           </label>
+          {fileError && <p role="alert" className="mt-2 text-sm text-red-600">{fileError}</p>}
           {pendingFiles.length > 0 && (
             <div className="mt-2 space-y-1">
               {pendingFiles.map((f, i) => (

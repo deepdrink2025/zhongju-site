@@ -281,6 +281,7 @@ export function createContractRouter(pool, opts = {}) {
         total: Number(cnt[0]?.total) || 0,
         page,
         page_size: pageSize,
+        max_file_size: u.MAX_FILE_SIZE,
         contracts: rows.map((r) => u.sanitizeContract(r, req.user.role)),
       });
     } catch (e) {
@@ -660,7 +661,7 @@ export function createContractRouter(pool, opts = {}) {
          WHERE f.contract_id = ? ORDER BY f.id DESC`,
         [id]
       );
-      res.json({ files: rows });
+      res.json({ files: rows, max_file_size: u.MAX_FILE_SIZE });
     } catch (e) {
       next(e);
     }
@@ -668,8 +669,14 @@ export function createContractRouter(pool, opts = {}) {
 
   router.post('/contracts/:id/files', auth, (req, res, next) => {
     upload.single('file')(req, res, (err) => {
+      if (err?.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          error: `文件超过单文件上限 ${u.MAX_FILE_SIZE / (1024 * 1024)} MB`,
+          max_file_size: u.MAX_FILE_SIZE,
+        });
+      }
       if (err) {
-        return res.status(400).json({ error: '上传失败：文件超过 10MB 或格式不支持' });
+        return res.status(400).json({ error: '上传失败：附件表单格式不正确' });
       }
       next();
     });
@@ -764,9 +771,6 @@ export function createContractRouter(pool, opts = {}) {
 
   // ---------- 错误兜底（路由级） ----------
   router.use((err, _req, res, _next) => {
-    if (err && (err.code === 'LIMIT_FILE_SIZE' || err.name === 'MulterError')) {
-      return res.status(400).json({ error: '上传失败：文件超过 10MB 或格式不支持' });
-    }
     console.error('[contract-api]', err);
     res.status(500).json({ error: '服务器内部错误' });
   });

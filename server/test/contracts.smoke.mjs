@@ -148,12 +148,13 @@ test('客户字段校验', () => {
   assert.ok(bad.errors.length > 0);
 });
 
-test('合同附件允许恰好 10 MiB，超出一字节时拒绝且不写入', async (t) => {
+test('合同接口返回附件大小上限，恰好达到上限可上传', async (t) => {
   const filesDir = await mkdtemp(join(tmpdir(), 'contract-upload-'));
   const pool = fakePool();
   const query = pool.query.bind(pool);
   pool.query = async (sql, params) => {
     if (sql.startsWith('SELECT * FROM contracts WHERE id = ? AND deleted_at IS NULL')) return [[{ id: 1 }]];
+    if (sql.startsWith('SELECT owner_user_id, deleted_at FROM contracts WHERE id = ?')) return [[{ id: 1 }]];
     if (sql.startsWith('INSERT INTO contract_files ')) return [{ insertId: 1 }];
     return query(sql, params);
   };
@@ -166,7 +167,14 @@ test('合同附件允许恰好 10 MiB，超出一字节时拒绝且不写入', a
   });
   await new Promise((resolve, reject) => server.once('listening', resolve).once('error', reject));
   const token = await createSession(pool, 1);
-  const url = `http://127.0.0.1:${server.address().port}/api/contract/contracts/1/files`;
+  const contractsUrl = `http://127.0.0.1:${server.address().port}/api/contract/contracts`;
+  const filesUrl = `${contractsUrl}/1/files`;
+  const headers = { Authorization: `Bearer ${token}` };
+  for (const url of [contractsUrl, filesUrl]) {
+    const response = await fetch(url, { headers });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).max_file_size, MAX_FILE_SIZE);
+  }
   const filename = '签署附件.pdf';
   const pdf = Buffer.alloc(MAX_FILE_SIZE + 1, 0x20);
   pdf.write('%PDF-1.4\n');
@@ -174,7 +182,7 @@ test('合同附件允许恰好 10 MiB，超出一字节时拒绝且不写入', a
   async function upload(bytes) {
     const body = new FormData();
     body.append('file', new Blob([pdf.subarray(0, bytes)], { type: 'application/pdf' }), filename);
-    return fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body });
+    return fetch(filesUrl, { method: 'POST', headers, body });
   }
 
   const atLimit = await upload(MAX_FILE_SIZE);
@@ -182,7 +190,9 @@ test('合同附件允许恰好 10 MiB，超出一字节时拒绝且不写入', a
   assert.deepEqual((await atLimit.json()).file, { id: 1, original_name: filename, size: MAX_FILE_SIZE });
   const overLimit = await upload(MAX_FILE_SIZE + 1);
   assert.equal(overLimit.status, 400);
-  assert.match((await overLimit.json()).error, /超过 10MB/);
+  const rejection = await overLimit.json();
+  assert.equal(rejection.max_file_size, MAX_FILE_SIZE);
+  assert.match(rejection.error, /超过单文件上限/);
   const storedFiles = await readdir(filesDir);
   assert.equal(storedFiles.length, 1);
   assert.equal((await stat(join(filesDir, storedFiles[0]))).size, MAX_FILE_SIZE);

@@ -183,6 +183,10 @@ export function fmtSize(n: number) {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
+export function attachmentLimitText(maxFileSize?: number) {
+  return maxFileSize == null ? '暂未获取上传上限' : `单文件最大 ${fmtSize(maxFileSize)}`;
+}
+
 export const STATUS_COLORS: Record<string, string> = {
   生效中: 'bg-emerald-100 text-emerald-700',
   即将到期: 'bg-amber-100 text-amber-700',

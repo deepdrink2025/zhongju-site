@@ -87,7 +87,10 @@ export default function ContractsPage() {
   const canAdd = user!.role === 'admin' || user!.role === 'contract_admin';
   const showMoney = canSeeMoney(user!.role);
 
-  const [data, setData] = useState<{ total: number; contracts: Contract[] }>({ total: 0, contracts: [] });
+  const [data, setData] = useState<{ total: number; contracts: Contract[]; max_file_size?: number }>({
+    total: 0,
+    contracts: [],
+  });
   const [q, setQ] = useState('');
   const [type, setType] = useState('');
   const [status, setStatus] = useState('');
@@ -107,7 +110,7 @@ export default function ContractsPage() {
       if (type) params.set('type', type);
       if (status) params.set('status', status);
       if (ownerId) params.set('owner_id', ownerId);
-      const d = await api<{ total: number; contracts: Contract[]; pages?: number }>(`/contracts?${params}`);
+      const d = await api<typeof data>(`/contracts?${params}`);
       setData(d);
       setPages(Math.max(1, Math.ceil(d.total / 20)));
     } catch (e) {
@@ -304,6 +307,7 @@ export default function ContractsPage() {
         <Modal title="新增合同" onClose={() => setShowCreate(false)} wide>
           <ContractForm
             initial={null}
+            maxFileSize={data.max_file_size}
             onDone={() => {
               setShowCreate(false);
               fetchList();

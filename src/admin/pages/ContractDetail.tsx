@@ -6,6 +6,7 @@ import ContractForm from '../components/ContractForm';
 import {
   ACTION_LABELS,
   STATUS_COLORS,
+  attachmentLimitText,
   canSeeMoney,
   fmtDate,
   fmtMoney,
@@ -162,7 +163,8 @@ export default function ContractDetail() {
   const contractId = Number(id);
 
   const [contract, setContract] = useState<Contract | null>(null);
-  const [files, setFiles] = useState<FileRow[]>([]);
+  const [attachments, setAttachments] = useState<{ files: FileRow[]; max_file_size?: number }>({ files: [] });
+  const { files, max_file_size: maxFileSize } = attachments;
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(false);
@@ -181,11 +183,11 @@ export default function ContractDetail() {
     try {
       const [c, f, l] = await Promise.all([
         api<{ contract: Contract }>(`/contracts/${contractId}`),
-        api<{ files: FileRow[] }>(`/contracts/${contractId}/files`),
+        api<typeof attachments>(`/contracts/${contractId}/files`),
         api<{ logs: LogRow[] }>(`/contracts/${contractId}/logs`),
       ]);
       setContract(c.contract);
-      setFiles(f.files);
+      setAttachments(f);
       setLogs(l.logs);
       setError('');
     } catch (e) {
@@ -234,6 +236,10 @@ export default function ContractDetail() {
   }
 
   async function upload(file: File) {
+    if (maxFileSize != null && file.size > maxFileSize) {
+      alert(`${file.name} 超出大小限制。${attachmentLimitText(maxFileSize)}。`);
+      return;
+    }
     setUploading(true);
     try {
       const fd = new FormData();
@@ -376,22 +382,25 @@ export default function ContractDetail() {
       </div>
 
       <div className="card">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-slate-500">附件（扫描件 / 补充协议）</h3>
           {canEdit && !contract.deleted_at && (
-            <label className={`btn-primary cursor-pointer ${uploading ? 'pointer-events-none opacity-60' : ''}`}>
-              {uploading ? '上传中…' : '＋ 上传附件'}
-              <input
-                type="file"
-                className="hidden"
-                accept=".pdf,.jpg,.jpeg,.png"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) upload(f);
-                  e.target.value = '';
-                }}
-              />
-            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500">{attachmentLimitText(maxFileSize)}</span>
+              <label className={`btn-primary cursor-pointer ${uploading ? 'pointer-events-none opacity-60' : ''}`}>
+                {uploading ? '上传中…' : '＋ 上传附件'}
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) upload(f);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
           )}
         </div>
         {files.length ? (
@@ -479,6 +488,7 @@ export default function ContractDetail() {
           <ContractForm
             initial={contract}
             contractId={contract.id}
+            maxFileSize={maxFileSize}
             onDone={() => {
               setEditing(false);
               fetchAll();
