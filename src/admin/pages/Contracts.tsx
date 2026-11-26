@@ -243,12 +243,12 @@ export default function ContractsPage() {
             {data.contracts.map((c) => (
               <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-500">
-                  <Link className="hover:text-ct-600" to={`/contracts/${c.id}`}>
+                  <Link className="hover:text-ct-600" to={`/admin/contracts/${c.id}`}>
                     {c.code}
                   </Link>
                 </td>
                 <td className="px-4 py-3">
-                  <Link className="font-medium hover:text-ct-600" to={`/contracts/${c.id}`}>
+                  <Link className="font-medium hover:text-ct-600" to={`/admin/contracts/${c.id}`}>
                     {c.name}
                   </Link>
                 </td>
@@ -268,7 +268,7 @@ export default function ContractsPage() {
                   <span className={`badge ${STATUS_COLORS[c.display_status] ?? ''}`}>{c.display_status}</span>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Link className="btn-plain" to={`/contracts/${c.id}`}>
+                  <Link className="btn-plain" to={`/admin/contracts/${c.id}`}>
                     详情
                   </Link>
                 </td>

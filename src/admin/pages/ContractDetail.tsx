@@ -284,7 +284,7 @@ export default function ContractDetail() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/contracts" className="btn-plain">
+        <Link to="/admin/contracts" className="btn-plain">
           ← 返回台账
         </Link>
         <h2 className="text-lg font-bold">
