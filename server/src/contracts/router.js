@@ -258,10 +258,10 @@ export function createContractRouter(pool, opts = {}) {
 
   // ---------- 合同 ----------
   const CONTRACT_SELECT = `
-    SELECT c.*, cu.name AS customer_name, uu.name AS owner_name
+    SELECT c.*, cu.name AS customer_name, o.name AS owner_name
     FROM contracts c
     JOIN contract_customers cu ON cu.id = c.customer_id
-    LEFT JOIN users uu ON uu.id = c.owner_user_id
+    LEFT JOIN contract_owners o ON o.id = c.owner_user_id
   `;
 
   router.get('/contracts', auth, async (req, res, next) => {

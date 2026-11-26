@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import ExcelJS from 'exceljs';
 import { pool, ensureSchema, migrateCardOwnership } from '../src/db.js';
 import { createApp } from '../src/app.js';
 import { hashPassword } from '../src/contracts/util.js';
@@ -34,12 +35,22 @@ try {
       [name, username, role, salt, hash]
     );
   }
-  // 3. 迁移语义验证：存量业务员账号在 ensureSchema 后应被停用且不可登录
+  // 3. 恢复旧版负责人外键，再验证存量合同和业务员账号的迁移
+  await pool.query('ALTER TABLE contracts DROP FOREIGN KEY fk_ct_contracts_owner');
+  await pool.query(
+    'ALTER TABLE contracts ADD CONSTRAINT fk_legacy_contracts_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)'
+  );
   {
     const { salt, hash } = hashPassword('integration-staff-pass');
-    await pool.query(
+    const [staff] = await pool.query(
       'INSERT INTO users (name, username, role, salt, password_hash) VALUES (?, ?, ?, ?, ?)',
       ['业务员甲', 'staff', 'staff', salt, hash]
+    );
+    const [customer] = await pool.query('INSERT INTO contract_customers (name) VALUES (?)', ['历史单位']);
+    await pool.query(
+      `INSERT INTO contracts (code, name, type, customer_id, owner_user_id, sign_date, start_date, end_date)
+       VALUES ('LEGACY-OWNER', '历史合同', '劳务派遣', ?, ?, '2025-12-31', '2026-01-01', '2026-12-31')`,
+      [customer.insertId, staff.insertId],
     );
   }
   await ensureSchema(); // 幂等重跑：应停用 staff 并完成外键切换
@@ -49,8 +60,8 @@ try {
   assert.equal(ownerRow.length, 1);
   assert.equal(ownerRow[0].status, 'active');
 
-  // 4. 存量名片归属迁移：无归属 → 主管理员
-  assert.equal(await migrateCardOwnership(), 1);
+  // 4. ensureSchema 已迁移存量名片归属，重复迁移应保持幂等
+  assert.equal(await migrateCardOwnership(), 0);
   const [old] = await pool.query('SELECT name, owner_user_id FROM cards WHERE id=?', ['history']);
   assert.equal(old[0].name, '历史测试名片');
   assert.equal(Number(old[0].owner_user_id), 1);
@@ -78,6 +89,9 @@ try {
   const contract = (await login('contract', 'integration-contract-pass')).token;
   assert.ok(admin && contract);
   assert.equal((await login('staff', 'integration-staff-pass')).status, 401);
+  const legacy = await req('/api/contract/contracts?q=LEGACY-OWNER', { token: contract });
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.data.contracts[0].owner_name, '业务员甲');
 
   // 5. 名片仅主管理员可创建，配额按账号统计
   const card = {
@@ -151,6 +165,27 @@ try {
   const owners = (await req('/api/contract/owners', { token: contract })).data.owners;
   const owner = owners.find((o) => o.name === '王新员');
   assert.ok(owner);
+
+  const ownerFilter = `owner_id=${owner.id}`;
+  const list = await req(`/api/contract/contracts?${ownerFilter}`, { token: contract });
+  assert.equal(list.status, 200);
+  assert.deepEqual(list.data.contracts.map(({ id, owner_name }) => ({ id, owner_name })), [
+    { id: created.data.id, owner_name: owner.name },
+  ]);
+  const detail = await req(`/api/contract/contracts/${created.data.id}`, { token: contract });
+  assert.equal(detail.status, 200);
+  assert.equal(detail.data.contract.owner_name, owner.name);
+
+  const exported = await fetch(`${base}/api/contract/contracts/export?${ownerFilter}`, {
+    headers: { Authorization: `Bearer ${contract}` },
+  });
+  assert.equal(exported.status, 200);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(await exported.arrayBuffer()));
+  const sheet = workbook.getWorksheet('合同台账');
+  assert.equal(sheet.getCell('F1').value, '业务负责人');
+  assert.equal(sheet.getCell('F2').value, owner.name);
+
   assert.equal(
     (
       await req('/api/contract/contracts', {
@@ -194,11 +229,12 @@ try {
     200
   );
   const mine = await req('/api/cards/mine', { token: admin });
-  assert.equal(mine.data.total, 3);
+  assert.equal(mine.status, 200);
+  assert.equal(mine.data.total, last.data.total);
   await req('/api/auth/logout', { method: 'POST', token: admin });
   assert.equal((await req('/api/auth/me', { token: admin })).status, 401);
   console.log(
-    'PASS real MySQL: two-role accounts, staff deprecation migration, owner archiving, legacy card migration, concurrent quota, ownership reassignment, escaped search and pagination work'
+    'PASS real MySQL: contract owner migration and display in list, detail and export, account migration, card quota, reassignment, search and pagination'
   );
 } finally {
   if (server) await new Promise((resolve) => server.close(resolve));
